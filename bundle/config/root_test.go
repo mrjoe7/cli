@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/databricks/cli/bundle/config/variable"
+	"github.com/databricks/cli/libs/dyn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,70 +26,9 @@ func TestRootMarshalUnmarshal(t *testing.T) {
 }
 
 func TestRootLoad(t *testing.T) {
-	root, err := Load("../tests/basic/databricks.yml")
-	require.NoError(t, err)
+	root, diags := Load("../tests/basic/databricks.yml")
+	require.NoError(t, diags.Error())
 	assert.Equal(t, "basic", root.Bundle.Name)
-}
-
-func TestRootMergeStruct(t *testing.T) {
-	root := &Root{
-		Path: "path",
-		Workspace: Workspace{
-			Host:    "foo",
-			Profile: "profile",
-		},
-	}
-	other := &Root{
-		Path: "path",
-		Workspace: Workspace{
-			Host: "bar",
-		},
-	}
-	assert.NoError(t, root.Merge(other))
-	assert.Equal(t, "bar", root.Workspace.Host)
-	assert.Equal(t, "profile", root.Workspace.Profile)
-}
-
-func TestRootMergeMap(t *testing.T) {
-	root := &Root{
-		Path: "path",
-		Targets: map[string]*Target{
-			"development": {
-				Workspace: &Workspace{
-					Host:    "foo",
-					Profile: "profile",
-				},
-			},
-		},
-	}
-	other := &Root{
-		Path: "path",
-		Targets: map[string]*Target{
-			"development": {
-				Workspace: &Workspace{
-					Host: "bar",
-				},
-			},
-		},
-	}
-	assert.NoError(t, root.Merge(other))
-	assert.Equal(t, &Workspace{Host: "bar", Profile: "profile"}, root.Targets["development"].Workspace)
-}
-
-func TestDuplicateIdOnLoadReturnsError(t *testing.T) {
-	_, err := Load("./testdata/duplicate_resource_names_in_root/databricks.yml")
-	assert.ErrorContains(t, err, "multiple resources named foo (job at ./testdata/duplicate_resource_names_in_root/databricks.yml, pipeline at ./testdata/duplicate_resource_names_in_root/databricks.yml)")
-}
-
-func TestDuplicateIdOnMergeReturnsError(t *testing.T) {
-	root, err := Load("./testdata/duplicate_resource_name_in_subconfiguration/databricks.yml")
-	require.NoError(t, err)
-
-	other, err := Load("./testdata/duplicate_resource_name_in_subconfiguration/resources.yml")
-	require.NoError(t, err)
-
-	err = root.Merge(other)
-	assert.ErrorContains(t, err, "multiple resources named foo (job at ./testdata/duplicate_resource_name_in_subconfiguration/databricks.yml, pipeline at ./testdata/duplicate_resource_name_in_subconfiguration/resources.yml)")
 }
 
 func TestInitializeVariables(t *testing.T) {
@@ -96,7 +36,7 @@ func TestInitializeVariables(t *testing.T) {
 	root := &Root{
 		Variables: map[string]*variable.Variable{
 			"foo": {
-				Default:     &fooDefault,
+				Default:     fooDefault,
 				Description: "an optional variable since default is defined",
 			},
 			"bar": {
@@ -107,8 +47,8 @@ func TestInitializeVariables(t *testing.T) {
 
 	err := root.InitializeVariables([]string{"foo=123", "bar=456"})
 	assert.NoError(t, err)
-	assert.Equal(t, "123", *(root.Variables["foo"].Value))
-	assert.Equal(t, "456", *(root.Variables["bar"].Value))
+	assert.Equal(t, "123", (root.Variables["foo"].Value))
+	assert.Equal(t, "456", (root.Variables["bar"].Value))
 }
 
 func TestInitializeVariablesWithAnEqualSignInValue(t *testing.T) {
@@ -122,7 +62,7 @@ func TestInitializeVariablesWithAnEqualSignInValue(t *testing.T) {
 
 	err := root.InitializeVariables([]string{"foo=123=567"})
 	assert.NoError(t, err)
-	assert.Equal(t, "123=567", *(root.Variables["foo"].Value))
+	assert.Equal(t, "123=567", (root.Variables["foo"].Value))
 }
 
 func TestInitializeVariablesInvalidFormat(t *testing.T) {
@@ -154,8 +94,161 @@ func TestInitializeVariablesUndefinedVariables(t *testing.T) {
 func TestRootMergeTargetOverridesWithMode(t *testing.T) {
 	root := &Root{
 		Bundle: Bundle{},
+		Targets: map[string]*Target{
+			"development": {
+				Mode: Development,
+			},
+		},
 	}
-	env := &Target{Mode: Development}
-	require.NoError(t, root.MergeTargetOverrides(env))
+	require.NoError(t, root.initializeDynamicValue())
+	require.NoError(t, root.MergeTargetOverrides("development"))
 	assert.Equal(t, Development, root.Bundle.Mode)
+}
+
+func TestInitializeComplexVariablesViaFlagIsNotAllowed(t *testing.T) {
+	root := &Root{
+		Variables: map[string]*variable.Variable{
+			"foo": {
+				Type: variable.VariableTypeComplex,
+			},
+		},
+	}
+
+	err := root.InitializeVariables([]string{"foo=123"})
+	assert.ErrorContains(t, err, "setting variables of complex type via --var flag is not supported: foo")
+}
+
+func TestRootMergeTargetOverridesWithVariables(t *testing.T) {
+	root := &Root{
+		Bundle: Bundle{},
+		Variables: map[string]*variable.Variable{
+			"foo": {
+				Default:     "foo",
+				Description: "foo var",
+			},
+			"foo2": {
+				Default:     "foo2",
+				Description: "foo2 var",
+			},
+			"complex": {
+				Type:        variable.VariableTypeComplex,
+				Description: "complex var",
+				Default: map[string]any{
+					"key": "value",
+				},
+			},
+		},
+		Targets: map[string]*Target{
+			"development": {
+				Variables: map[string]*variable.TargetVariable{
+					"foo": {
+						Default:     "bar",
+						Description: "wrong",
+					},
+					"complex": {
+						Type:        "wrong",
+						Description: "wrong",
+						Default: map[string]any{
+							"key1": "value1",
+						},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, root.initializeDynamicValue())
+	require.NoError(t, root.MergeTargetOverrides("development"))
+	assert.Equal(t, "bar", root.Variables["foo"].Default)
+	assert.Equal(t, "foo var", root.Variables["foo"].Description)
+
+	assert.Equal(t, "foo2", root.Variables["foo2"].Default)
+	assert.Equal(t, "foo2 var", root.Variables["foo2"].Description)
+
+	assert.Equal(t, map[string]any{
+		"key1": "value1",
+	}, root.Variables["complex"].Default)
+	assert.Equal(t, "complex var", root.Variables["complex"].Description)
+}
+
+func TestIsFullVariableOverrideDef(t *testing.T) {
+	testCases := []struct {
+		value    dyn.Value
+		expected bool
+	}{
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"type":        dyn.V("string"),
+				"default":     dyn.V("foo"),
+				"description": dyn.V("foo var"),
+			}),
+			expected: true,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"type":        dyn.V("string"),
+				"lookup":      dyn.V("foo"),
+				"description": dyn.V("foo var"),
+			}),
+			expected: false,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"type":    dyn.V("string"),
+				"default": dyn.V("foo"),
+			}),
+			expected: true,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"type":   dyn.V("string"),
+				"lookup": dyn.V("foo"),
+			}),
+			expected: false,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"description": dyn.V("string"),
+				"default":     dyn.V("foo"),
+			}),
+			expected: true,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"description": dyn.V("string"),
+				"lookup":      dyn.V("foo"),
+			}),
+			expected: true,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"default": dyn.V("foo"),
+			}),
+			expected: true,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"lookup": dyn.V("foo"),
+			}),
+			expected: true,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"type": dyn.V("string"),
+			}),
+			expected: false,
+		},
+		{
+			value: dyn.V(map[string]dyn.Value{
+				"type":        dyn.V("string"),
+				"default":     dyn.V("foo"),
+				"description": dyn.V("foo var"),
+				"lookup":      dyn.V("foo"),
+			}),
+			expected: false,
+		},
+	}
+
+	for i, tc := range testCases {
+		assert.Equal(t, tc.expected, isFullVariableOverrideDef(tc.value), "test case %d", i)
+	}
 }

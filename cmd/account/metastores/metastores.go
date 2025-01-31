@@ -26,6 +26,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -63,7 +70,7 @@ func newCreate() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -73,9 +80,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -96,12 +109,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -126,12 +133,15 @@ func newDelete() *cobra.Command {
 	cmd.Short = `Delete a metastore.`
 	cmd.Long = `Delete a metastore.
   
-  Deletes a Unity Catalog metastore for an account, both specified by ID.`
+  Deletes a Unity Catalog metastore for an account, both specified by ID.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -161,12 +171,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -187,12 +191,15 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get a metastore.`
 	cmd.Long = `Get a metastore.
   
-  Gets a Unity Catalog metastore from an account, both specified by ID.`
+  Gets a Unity Catalog metastore from an account, both specified by ID.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -222,12 +229,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -251,11 +252,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		a := root.AccountClient(ctx)
-		response, err := a.Metastores.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := a.Metastores.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -268,12 +266,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -300,12 +292,15 @@ func newUpdate() *cobra.Command {
 	cmd.Short = `Update a metastore.`
 	cmd.Long = `Update a metastore.
   
-  Updates an existing Unity Catalog metastore.`
+  Updates an existing Unity Catalog metastore.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -315,9 +310,15 @@ func newUpdate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.MetastoreId = args[0]
@@ -339,12 +340,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service AccountMetastores

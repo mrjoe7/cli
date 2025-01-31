@@ -18,8 +18,10 @@ import (
 
 var minUcRuntime = canonicalVersion("v12.0")
 
-var dbrVersionRegex = regexp.MustCompile(`^(\d+\.\d+)\.x-.*`)
-var dbrSnapshotVersionRegex = regexp.MustCompile(`^(\d+)\.x-snapshot.*`)
+var (
+	dbrVersionRegex         = regexp.MustCompile(`^(\d+\.\d+)\.x-.*`)
+	dbrSnapshotVersionRegex = regexp.MustCompile(`^(\d+)\.x-snapshot.*`)
+)
 
 func canonicalVersion(v string) string {
 	return semver.Canonical("v" + strings.TrimPrefix(v, "v"))
@@ -31,7 +33,7 @@ func GetRuntimeVersion(cluster compute.ClusterDetails) (string, bool) {
 		match = dbrSnapshotVersionRegex.FindStringSubmatch(cluster.SparkVersion)
 		if len(match) > 1 {
 			// we return 14.999 for 14.x-snapshot for semver.Compare() to work properly
-			return fmt.Sprintf("%s.999", match[1]), true
+			return match[1] + ".999", true
 		}
 		return "", false
 	}
@@ -118,12 +120,33 @@ func WithDatabricksConnect(minVersion string) func(*compute.ClusterDetails, *iam
 	}
 }
 
+// WithoutSystemClusters removes clusters created for system purposes (e.g. job runs, pipeline maintenance, etc.).
+// It does this by keeping only clusters created through the UI or an API call.
+func WithoutSystemClusters() func(*compute.ClusterDetails, *iam.User) bool {
+	return func(cluster *compute.ClusterDetails, me *iam.User) bool {
+		switch cluster.ClusterSource {
+		case compute.ClusterSourceApi, compute.ClusterSourceUi:
+			return true
+		}
+		return false
+	}
+}
+
 func loadInteractiveClusters(ctx context.Context, w *databricks.WorkspaceClient, filters []clusterFilter) ([]compatibleCluster, error) {
 	promptSpinner := cmdio.Spinner(ctx)
 	promptSpinner <- "Loading list of clusters to select from"
 	defer close(promptSpinner)
 	all, err := w.Clusters.ListAll(ctx, compute.ListClustersRequest{
-		CanUseClient: "NOTEBOOKS",
+		// Maximum page size to optimize for load time.
+		PageSize: 100,
+
+		// Filter out system clusters.
+		FilterBy: &compute.ListClustersFilterBy{
+			ClusterSources: []compute.ClusterSource{
+				compute.ClusterSourceApi,
+				compute.ClusterSourceUi,
+			},
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list clusters: %w", err)

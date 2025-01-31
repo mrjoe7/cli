@@ -85,6 +85,12 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newPatchStatus())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -146,7 +152,7 @@ func newCreate() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -156,9 +162,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -179,12 +191,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start get command
@@ -208,7 +214,10 @@ func newGet() *cobra.Command {
 	cmd.Long = `Get log delivery configuration.
   
   Gets a Databricks log delivery configuration object for an account, both
-  specified by ID.`
+  specified by ID.
+
+  Arguments:
+    LOG_DELIVERY_CONFIGURATION_ID: Databricks log delivery configuration ID`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -255,12 +264,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -278,7 +281,7 @@ func newList() *cobra.Command {
 	// TODO: short flags
 
 	cmd.Flags().StringVar(&listReq.CredentialsId, "credentials-id", listReq.CredentialsId, `Filter by credential configuration ID.`)
-	cmd.Flags().Var(&listReq.Status, "status", `Filter by status ENABLED or DISABLED.`)
+	cmd.Flags().Var(&listReq.Status, "status", `Filter by status ENABLED or DISABLED. Supported values: [DISABLED, ENABLED]`)
 	cmd.Flags().StringVar(&listReq.StorageConfigurationId, "storage-configuration-id", listReq.StorageConfigurationId, `Filter by storage configuration ID.`)
 
 	cmd.Use = "list"
@@ -291,7 +294,7 @@ func newList() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -300,11 +303,8 @@ func newList() *cobra.Command {
 		ctx := cmd.Context()
 		a := root.AccountClient(ctx)
 
-		response, err := a.LogDelivery.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := a.LogDelivery.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -317,12 +317,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start patch-status command
@@ -351,19 +345,27 @@ func newPatchStatus() *cobra.Command {
   configurations is not supported, so disable log delivery configurations that
   are no longer needed. Note that you can't re-enable a delivery configuration
   if this would violate the delivery configuration limits described under
-  [Create log delivery](:method:LogDelivery/Create).`
+  [Create log delivery](:method:LogDelivery/Create).
+
+  Arguments:
+    LOG_DELIVERY_CONFIGURATION_ID: Databricks log delivery configuration ID
+    STATUS: Status of log delivery configuration. Set to ENABLED (enabled) or
+      DISABLED (disabled). Defaults to ENABLED. You can [enable or disable
+      the configuration](#operation/patch-log-delivery-config-status) later.
+      Deletion of a configuration is not supported, so disable a log delivery
+      configuration that is no longer needed.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(1)(cmd, args)
+			err := root.ExactArgs(1)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, provide only LOG_DELIVERY_CONFIGURATION_ID as positional arguments. Provide 'status' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -373,9 +375,15 @@ func newPatchStatus() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = patchStatusJson.Unmarshal(&patchStatusReq)
-			if err != nil {
-				return err
+			diags := patchStatusJson.Unmarshal(&patchStatusReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		patchStatusReq.LogDeliveryConfigurationId = args[0]
@@ -403,12 +411,6 @@ func newPatchStatus() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newPatchStatus())
-	})
 }
 
 // end service LogDelivery

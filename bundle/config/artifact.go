@@ -1,33 +1,21 @@
 package config
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"path"
-	"strings"
+	"errors"
 
-	"github.com/databricks/cli/bundle/config/paths"
-	"github.com/databricks/cli/libs/process"
-	"github.com/databricks/databricks-sdk-go/service/compute"
+	"github.com/databricks/cli/libs/exec"
 )
 
 type Artifacts map[string]*Artifact
-
-func (artifacts Artifacts) SetConfigFilePath(path string) {
-	for _, artifact := range artifacts {
-		artifact.ConfigFilePath = path
-	}
-}
 
 type ArtifactType string
 
 const ArtifactPythonWheel ArtifactType = `whl`
 
 type ArtifactFile struct {
-	Source     string             `json:"source"`
-	RemotePath string             `json:"-" bundle:"readonly"`
-	Libraries  []*compute.Library `json:"-" bundle:"readonly"`
+	Source     string `json:"source"`
+	RemotePath string `json:"remote_path" bundle:"readonly"`
 }
 
 // Artifact defines a single local code artifact that can be
@@ -44,59 +32,24 @@ type Artifact struct {
 	Files        []ArtifactFile `json:"files,omitempty"`
 	BuildCommand string         `json:"build,omitempty"`
 
-	paths.Paths
+	Executable exec.ExecutableType `json:"executable,omitempty"`
 }
 
 func (a *Artifact) Build(ctx context.Context) ([]byte, error) {
 	if a.BuildCommand == "" {
-		return nil, fmt.Errorf("no build property defined")
+		return nil, errors.New("no build property defined")
 	}
 
-	out := make([][]byte, 0)
-	commands := strings.Split(a.BuildCommand, " && ")
-	for _, command := range commands {
-		buildParts := strings.Split(command, " ")
-		var buf bytes.Buffer
-		_, err := process.Background(ctx, buildParts,
-			process.WithCombinedOutput(&buf),
-			process.WithDir(a.Path))
-		if err != nil {
-			return buf.Bytes(), err
-		}
-		out = append(out, buf.Bytes())
+	var e *exec.Executor
+	var err error
+	if a.Executable != "" {
+		e, err = exec.NewCommandExecutorWithExecutable(a.Path, a.Executable)
+	} else {
+		e, err = exec.NewCommandExecutor(a.Path)
+		a.Executable = e.ShellType()
 	}
-	return bytes.Join(out, []byte{}), nil
-}
-
-func (a *Artifact) NormalisePaths() {
-	for _, f := range a.Files {
-		// If no libraries attached, nothing to normalise, skipping
-		if f.Libraries == nil {
-			continue
-		}
-
-		wsfsBase := "/Workspace"
-		remotePath := path.Join(wsfsBase, f.RemotePath)
-		for i := range f.Libraries {
-			lib := f.Libraries[i]
-			if lib.Whl != "" {
-				lib.Whl = remotePath
-				continue
-			}
-			if lib.Jar != "" {
-				lib.Jar = remotePath
-				continue
-			}
-		}
-
+	if err != nil {
+		return nil, err
 	}
-}
-
-// This function determines if artifact files needs to be uploaded.
-// During the bundle processing we analyse which library uses which artifact file.
-// If artifact file is used as a library, we store the reference to this library in artifact file Libraries field.
-// If artifact file has libraries it's been used in, it means than we need to upload this file.
-// Otherwise this artifact file is not used and we skip uploading
-func (af *ArtifactFile) NeedsUpload() bool {
-	return af.Libraries != nil
+	return e.Exec(ctx, a.BuildCommand)
 }

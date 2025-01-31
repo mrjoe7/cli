@@ -47,12 +47,17 @@ type Workspace struct {
 
 	// Remote workspace base path for deployment state, for artifacts, as synchronization target.
 	// This defaults to "~/.bundle/${bundle.name}/${bundle.target}" where "~" expands to
-	// the current user's home directory in the workspace (e.g. `/Users/jane@doe.com`).
+	// the current user's home directory in the workspace (e.g. `/Workspace/Users/jane@doe.com`).
 	RootPath string `json:"root_path,omitempty"`
 
 	// Remote workspace path to synchronize local files to.
 	// This defaults to "${workspace.root}/files".
 	FilePath string `json:"file_path,omitempty"`
+
+	// Remote workspace path for resources with a presence in the workspace.
+	// These are kept outside [FilePath] to avoid potential naming collisions.
+	// This defaults to "${workspace.root}/resources".
+	ResourcePath string `json:"resource_path,omitempty"`
 
 	// Remote workspace path for build artifacts.
 	// This defaults to "${workspace.root}/artifacts".
@@ -78,8 +83,8 @@ func (s User) MarshalJSON() ([]byte, error) {
 	return marshal.Marshal(s)
 }
 
-func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
-	cfg := config.Config{
+func (w *Workspace) Config() *config.Config {
+	cfg := &config.Config{
 		// Generic
 		Host:               w.Host,
 		Profile:            w.Profile,
@@ -100,6 +105,19 @@ func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
 		AzureEnvironment: w.AzureEnvironment,
 		AzureLoginAppID:  w.AzureLoginAppID,
 	}
+
+	for k := range config.ConfigAttributes {
+		attr := &config.ConfigAttributes[k]
+		if !attr.IsZero(cfg) {
+			cfg.SetAttrSource(attr, config.Source{Type: config.SourceType("bundle")})
+		}
+	}
+
+	return cfg
+}
+
+func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
+	cfg := w.Config()
 
 	// If only the host is configured, we try and unambiguously match it to
 	// a profile in the user's databrickscfg file. Override the default loaders.
@@ -124,13 +142,13 @@ func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
 	// Now that the configuration is resolved, we can verify that the host in the bundle configuration
 	// is identical to the host associated with the selected profile.
 	if w.Host != "" && w.Profile != "" {
-		err := databrickscfg.ValidateConfigAndProfileHost(&cfg, w.Profile)
+		err := databrickscfg.ValidateConfigAndProfileHost(cfg, w.Profile)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return databricks.NewWorkspaceClient((*databricks.Config)(&cfg))
+	return databricks.NewWorkspaceClient((*databricks.Config)(cfg))
 }
 
 func init() {

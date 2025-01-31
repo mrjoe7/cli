@@ -2,14 +2,15 @@ package root
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
-	"log/slog"
-
 	"github.com/databricks/cli/internal/build"
 	"github.com/databricks/cli/libs/cmdio"
+	"github.com/databricks/cli/libs/dbr"
 	"github.com/databricks/cli/libs/log"
 	"github.com/spf13/cobra"
 )
@@ -72,8 +73,12 @@ func New(ctx context.Context) *cobra.Command {
 		// get the context back
 		ctx = cmd.Context()
 
+		// Detect if the CLI is running on DBR and store this on the context.
+		ctx = dbr.DetectRuntime(ctx)
+
 		// Configure our user agent with the command that's about to be executed.
 		ctx = withCommandInUserAgent(ctx, cmd)
+		ctx = withCommandExecIdInUserAgent(ctx)
 		ctx = withUpstreamInUserAgent(ctx)
 		cmd.SetContext(ctx)
 		return nil
@@ -91,13 +96,12 @@ func flagErrorFunc(c *cobra.Command, err error) error {
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute(cmd *cobra.Command) {
+func Execute(ctx context.Context, cmd *cobra.Command) error {
 	// TODO: deferred panic recovery
-	ctx := context.Background()
 
 	// Run the command
 	cmd, err := cmd.ExecuteContextC(ctx)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrAlreadyPrinted) {
 		// If cmdio logger initialization succeeds, then this function logs with the
 		// initialized cmdio logger, otherwise with the default cmdio logger
 		cmdio.LogError(cmd.Context(), err)
@@ -117,7 +121,5 @@ func Execute(cmd *cobra.Command) {
 		}
 	}
 
-	if err != nil {
-		os.Exit(1)
-	}
+	return err
 }

@@ -2,7 +2,9 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	stdsync "sync"
 	"time"
 
 	"github.com/databricks/cli/libs/filer"
@@ -10,15 +12,21 @@ import (
 	"github.com/databricks/cli/libs/git"
 	"github.com/databricks/cli/libs/log"
 	"github.com/databricks/cli/libs/set"
+	"github.com/databricks/cli/libs/vfs"
 	"github.com/databricks/databricks-sdk-go"
 	"github.com/databricks/databricks-sdk-go/service/iam"
 )
 
+type OutputHandler func(context.Context, <-chan Event)
+
 type SyncOptions struct {
-	LocalPath  string
+	WorktreeRoot vfs.Path
+	LocalRoot    vfs.Path
+	Paths        []string
+	Include      []string
+	Exclude      []string
+
 	RemotePath string
-	Include    []string
-	Exclude    []string
 
 	Full bool
 
@@ -31,6 +39,8 @@ type SyncOptions struct {
 	CurrentUser *iam.User
 
 	Host string
+
+	OutputHandler OutputHandler
 }
 
 type Sync struct {
@@ -46,25 +56,30 @@ type Sync struct {
 	// Synchronization progress events are sent to this event notifier.
 	notifier EventNotifier
 	seq      int
+
+	// WaitGroup is automatically created when an output handler is provided in the SyncOptions.
+	// Close call is required to ensure the output handler goroutine handles all events in time.
+	outputWaitGroup *stdsync.WaitGroup
 }
 
 // New initializes and returns a new [Sync] instance.
 func New(ctx context.Context, opts SyncOptions) (*Sync, error) {
-	fileSet, err := git.NewFileSet(opts.LocalPath)
+	fileSet, err := git.NewFileSet(opts.WorktreeRoot, opts.LocalRoot, opts.Paths)
 	if err != nil {
 		return nil, err
 	}
+
 	err = fileSet.EnsureValidGitIgnoreExists()
 	if err != nil {
 		return nil, err
 	}
 
-	includeFileSet, err := fileset.NewGlobSet(opts.LocalPath, opts.Include)
+	includeFileSet, err := fileset.NewGlobSet(opts.LocalRoot, opts.Include)
 	if err != nil {
 		return nil, err
 	}
 
-	excludeFileSet, err := fileset.NewGlobSet(opts.LocalPath, opts.Exclude)
+	excludeFileSet, err := fileset.NewGlobSet(opts.LocalRoot, opts.Exclude)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +94,7 @@ func New(ctx context.Context, opts SyncOptions) (*Sync, error) {
 	// specify the workspace by its resource ID. tracked in: https://databricks.atlassian.net/browse/DECO-194
 	opts.Host = opts.WorkspaceClient.Config.Host
 	if opts.Host == "" {
-		return nil, fmt.Errorf("failed to resolve host for snapshot")
+		return nil, errors.New("failed to resolve host for snapshot")
 	}
 
 	// For full sync, we start with an empty snapshot.
@@ -102,23 +117,32 @@ func New(ctx context.Context, opts SyncOptions) (*Sync, error) {
 		return nil, err
 	}
 
+	var notifier EventNotifier
+	outputWaitGroup := &stdsync.WaitGroup{}
+	if opts.OutputHandler != nil {
+		ch := make(chan Event, MaxRequestsInFlight)
+		notifier = &ChannelNotifier{ch}
+		outputWaitGroup.Add(1)
+		go func() {
+			defer outputWaitGroup.Done()
+			opts.OutputHandler(ctx, ch)
+		}()
+	} else {
+		notifier = &NopNotifier{}
+	}
+
 	return &Sync{
 		SyncOptions: &opts,
 
-		fileSet:        fileSet,
-		includeFileSet: includeFileSet,
-		excludeFileSet: excludeFileSet,
-		snapshot:       snapshot,
-		filer:          filer,
-		notifier:       &NopNotifier{},
-		seq:            0,
+		fileSet:         fileSet,
+		includeFileSet:  includeFileSet,
+		excludeFileSet:  excludeFileSet,
+		snapshot:        snapshot,
+		filer:           filer,
+		notifier:        notifier,
+		outputWaitGroup: outputWaitGroup,
+		seq:             0,
 	}, nil
-}
-
-func (s *Sync) Events() <-chan Event {
-	ch := make(chan Event, MaxRequestsInFlight)
-	s.notifier = &ChannelNotifier{ch}
-	return ch
 }
 
 func (s *Sync) Close() {
@@ -127,6 +151,7 @@ func (s *Sync) Close() {
 	}
 	s.notifier.Close()
 	s.notifier = nil
+	s.outputWaitGroup.Wait()
 }
 
 func (s *Sync) notifyStart(ctx context.Context, d diff) {
@@ -150,52 +175,57 @@ func (s *Sync) notifyComplete(ctx context.Context, d diff) {
 	s.seq++
 }
 
-func (s *Sync) RunOnce(ctx context.Context) error {
-	files, err := getFileList(ctx, s)
+// Upload all files in the file tree rooted at the local path configured in the
+// SyncOptions to the remote path configured in the SyncOptions.
+//
+// Returns the list of files tracked (and synchronized) by the syncer during the run,
+// and an error if any occurred.
+func (s *Sync) RunOnce(ctx context.Context) ([]fileset.File, error) {
+	files, err := s.GetFileList(ctx)
 	if err != nil {
-		return err
+		return files, err
 	}
 
 	change, err := s.snapshot.diff(ctx, files)
 	if err != nil {
-		return err
+		return files, err
 	}
 
 	s.notifyStart(ctx, change)
 	if change.IsEmpty() {
 		s.notifyComplete(ctx, change)
-		return nil
+		return files, nil
 	}
 
 	err = s.applyDiff(ctx, change)
 	if err != nil {
-		return err
+		return files, err
 	}
 
 	err = s.snapshot.Save(ctx)
 	if err != nil {
 		log.Errorf(ctx, "cannot store snapshot: %s", err)
-		return err
+		return files, err
 	}
 
 	s.notifyComplete(ctx, change)
-	return nil
+	return files, nil
 }
 
-func getFileList(ctx context.Context, s *Sync) ([]fileset.File, error) {
+func (s *Sync) GetFileList(ctx context.Context) ([]fileset.File, error) {
 	// tradeoff: doing portable monitoring only due to macOS max descriptor manual ulimit setting requirement
 	// https://github.com/gorakhargosh/watchdog/blob/master/src/watchdog/observers/kqueue.py#L394-L418
 	all := set.NewSetF(func(f fileset.File) string {
-		return f.Absolute
+		return f.Relative
 	})
-	gitFiles, err := s.fileSet.All()
+	gitFiles, err := s.fileSet.Files()
 	if err != nil {
 		log.Errorf(ctx, "cannot list files: %s", err)
 		return nil, err
 	}
 	all.Add(gitFiles...)
 
-	include, err := s.includeFileSet.All()
+	include, err := s.includeFileSet.Files()
 	if err != nil {
 		log.Errorf(ctx, "cannot list include files: %s", err)
 		return nil, err
@@ -203,7 +233,7 @@ func getFileList(ctx context.Context, s *Sync) ([]fileset.File, error) {
 
 	all.Add(include...)
 
-	exclude, err := s.excludeFileSet.All()
+	exclude, err := s.excludeFileSet.Files()
 	if err != nil {
 		log.Errorf(ctx, "cannot list exclude files: %s", err)
 		return nil, err
@@ -216,14 +246,6 @@ func getFileList(ctx context.Context, s *Sync) ([]fileset.File, error) {
 	return all.Iter(), nil
 }
 
-func (s *Sync) DestroySnapshot(ctx context.Context) error {
-	return s.snapshot.Destroy(ctx)
-}
-
-func (s *Sync) SnapshotPath() string {
-	return s.snapshot.SnapshotPath
-}
-
 func (s *Sync) RunContinuous(ctx context.Context) error {
 	ticker := time.NewTicker(s.PollInterval)
 	defer ticker.Stop()
@@ -233,7 +255,7 @@ func (s *Sync) RunContinuous(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			err := s.RunOnce(ctx)
+			_, err := s.RunOnce(ctx)
 			if err != nil {
 				return err
 			}

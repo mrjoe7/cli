@@ -6,21 +6,34 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/databricks/cli/libs/auth/cache"
+	"github.com/databricks/databricks-sdk-go/httpclient"
 	"github.com/databricks/databricks-sdk-go/retries"
 	"github.com/pkg/browser"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/authhandler"
 )
+
+var apiClientForOauth int
+
+func WithApiClientForOAuth(ctx context.Context, c *httpclient.ApiClient) context.Context {
+	return context.WithValue(ctx, &apiClientForOauth, c)
+}
+
+func GetApiClientForOAuth(ctx context.Context) *httpclient.ApiClient {
+	c, ok := ctx.Value(&apiClientForOauth).(*httpclient.ApiClient)
+	if !ok {
+		return httpclient.NewApiClient(httpclient.ClientConfig{})
+	}
+	return c
+}
 
 const (
 	// these values are predefined by Databricks as a public client
@@ -30,7 +43,7 @@ const (
 	appRedirectAddr = "localhost:8020"
 
 	// maximum amount of time to acquire listener on appRedirectAddr
-	DefaultTimeout = 45 * time.Second
+	listenerTimeout = 45 * time.Second
 )
 
 var ( // Databricks SDK API: `databricks OAuth is not` will be checked for presence
@@ -43,19 +56,14 @@ type PersistentAuth struct {
 	Host      string
 	AccountID string
 
-	http    httpGet
-	cache   tokenCache
+	http    *httpclient.ApiClient
+	cache   cache.TokenCache
 	ln      net.Listener
 	browser func(string) error
 }
 
-type httpGet interface {
-	Get(string) (*http.Response, error)
-}
-
-type tokenCache interface {
-	Store(key string, t *oauth2.Token) error
-	Lookup(key string) (*oauth2.Token, error)
+func (a *PersistentAuth) SetApiClient(h *httpclient.ApiClient) {
+	a.http = h
 }
 
 func (a *PersistentAuth) Load(ctx context.Context) (*oauth2.Token, error) {
@@ -77,10 +85,12 @@ func (a *PersistentAuth) Load(ctx context.Context) (*oauth2.Token, error) {
 	}
 	// OAuth2 config is invoked only for expired tokens to speed up
 	// the happy path in the token retrieval
-	cfg, err := a.oauth2Config()
+	cfg, err := a.oauth2Config(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// make OAuth2 library use our client
+	ctx = a.http.InContextForOAuth2(ctx)
 	// eagerly refresh token
 	refreshed, err := cfg.TokenSource(ctx, t).Token()
 	if err != nil {
@@ -96,9 +106,8 @@ func (a *PersistentAuth) Load(ctx context.Context) (*oauth2.Token, error) {
 }
 
 func (a *PersistentAuth) ProfileName() string {
-	// TODO: get profile name from interactive input
 	if a.AccountID != "" {
-		return fmt.Sprintf("ACCOUNT-%s", a.AccountID)
+		return "ACCOUNT-" + a.AccountID
 	}
 	host := strings.TrimPrefix(a.Host, "https://")
 	split := strings.Split(host, ".")
@@ -110,7 +119,7 @@ func (a *PersistentAuth) Challenge(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
-	cfg, err := a.oauth2Config()
+	cfg, err := a.oauth2Config(ctx)
 	if err != nil {
 		return err
 	}
@@ -120,6 +129,8 @@ func (a *PersistentAuth) Challenge(ctx context.Context) error {
 	}
 	defer cb.Close()
 	state, pkce := a.stateAndPKCE()
+	// make OAuth2 library use our client
+	ctx = a.http.InContextForOAuth2(ctx)
 	ts := authhandler.TokenSourceWithPKCE(ctx, cfg, state, cb.Handler, pkce)
 	t, err := ts.Token()
 	if err != nil {
@@ -133,23 +144,46 @@ func (a *PersistentAuth) Challenge(ctx context.Context) error {
 	return nil
 }
 
+// This function cleans up the host URL by only retaining the scheme and the host.
+// This function thus removes any path, query arguments, or fragments from the URL.
+func (a *PersistentAuth) cleanHost() {
+	parsedHost, err := url.Parse(a.Host)
+	if err != nil {
+		return
+	}
+	// when either host or scheme is empty, we don't want to clean it. This is because
+	// the Go url library parses a raw "abc" string as the path of a URL and cleaning
+	// it will return thus return an empty string.
+	if parsedHost.Host == "" || parsedHost.Scheme == "" {
+		return
+	}
+	host := url.URL{
+		Scheme: parsedHost.Scheme,
+		Host:   parsedHost.Host,
+	}
+	a.Host = host.String()
+}
+
 func (a *PersistentAuth) init(ctx context.Context) error {
 	if a.Host == "" && a.AccountID == "" {
 		return ErrFetchCredentials
 	}
 	if a.http == nil {
-		a.http = http.DefaultClient
+		a.http = GetApiClientForOAuth(ctx)
 	}
 	if a.cache == nil {
-		a.cache = &cache.TokenCache{}
+		a.cache = cache.GetTokenCache(ctx)
 	}
 	if a.browser == nil {
 		a.browser = browser.OpenURL
 	}
+
+	a.cleanHost()
+
 	// try acquire listener, which we also use as a machine-local
 	// exclusive lock to prevent token cache corruption in the scope
 	// of developer machine, where this command runs.
-	listener, err := retries.Poll(ctx, DefaultTimeout,
+	listener, err := retries.Poll(ctx, listenerTimeout,
 		func() (*net.Listener, *retries.Err) {
 			var lc net.ListenConfig
 			l, err := lc.Listen(ctx, "tcp", appRedirectAddr)
@@ -172,39 +206,28 @@ func (a *PersistentAuth) Close() error {
 	return a.ln.Close()
 }
 
-func (a *PersistentAuth) oidcEndpoints() (*oauthAuthorizationServer, error) {
+func (a *PersistentAuth) oidcEndpoints(ctx context.Context) (*oauthAuthorizationServer, error) {
 	prefix := a.key()
 	if a.AccountID != "" {
 		return &oauthAuthorizationServer{
-			AuthorizationEndpoint: fmt.Sprintf("%s/v1/authorize", prefix),
-			TokenEndpoint:         fmt.Sprintf("%s/v1/token", prefix),
+			AuthorizationEndpoint: prefix + "/v1/authorize",
+			TokenEndpoint:         prefix + "/v1/token",
 		}, nil
 	}
-	oidc := fmt.Sprintf("%s/oidc/.well-known/oauth-authorization-server", prefix)
-	oidcResponse, err := a.http.Get(oidc)
+	var oauthEndpoints oauthAuthorizationServer
+	oidc := prefix + "/oidc/.well-known/oauth-authorization-server"
+	err := a.http.Do(ctx, "GET", oidc, httpclient.WithResponseUnmarshal(&oauthEndpoints))
 	if err != nil {
 		return nil, fmt.Errorf("fetch .well-known: %w", err)
 	}
-	if oidcResponse.StatusCode != 200 {
+	var httpErr *httpclient.HttpError
+	if errors.As(err, &httpErr) && httpErr.StatusCode != 200 {
 		return nil, ErrOAuthNotSupported
-	}
-	if oidcResponse.Body == nil {
-		return nil, fmt.Errorf("fetch .well-known: empty body")
-	}
-	defer oidcResponse.Body.Close()
-	raw, err := io.ReadAll(oidcResponse.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read .well-known: %w", err)
-	}
-	var oauthEndpoints oauthAuthorizationServer
-	err = json.Unmarshal(raw, &oauthEndpoints)
-	if err != nil {
-		return nil, fmt.Errorf("parse .well-known: %w", err)
 	}
 	return &oauthEndpoints, nil
 }
 
-func (a *PersistentAuth) oauth2Config() (*oauth2.Config, error) {
+func (a *PersistentAuth) oauth2Config(ctx context.Context) (*oauth2.Config, error) {
 	// in this iteration of CLI, we're using all scopes by default,
 	// because tools like CLI and Terraform do use all apis. This
 	// decision may be reconsidered later, once we have a proper
@@ -213,7 +236,7 @@ func (a *PersistentAuth) oauth2Config() (*oauth2.Config, error) {
 		"offline_access",
 		"all-apis",
 	}
-	endpoints, err := a.oidcEndpoints()
+	endpoints, err := a.oidcEndpoints(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: %w", err)
 	}
@@ -224,7 +247,7 @@ func (a *PersistentAuth) oauth2Config() (*oauth2.Config, error) {
 			TokenURL:  endpoints.TokenEndpoint,
 			AuthStyle: oauth2.AuthStyleInParams,
 		},
-		RedirectURL: fmt.Sprintf("http://%s", appRedirectAddr),
+		RedirectURL: "http://" + appRedirectAddr,
 		Scopes:      scopes,
 	}, nil
 }
@@ -235,7 +258,7 @@ func (a *PersistentAuth) oauth2Config() (*oauth2.Config, error) {
 func (a *PersistentAuth) key() string {
 	a.Host = strings.TrimSuffix(a.Host, "/")
 	if !strings.HasPrefix(a.Host, "http") {
-		a.Host = fmt.Sprintf("https://%s", a.Host)
+		a.Host = "https://" + a.Host
 	}
 	if a.AccountID != "" {
 		return fmt.Sprintf("%s/oidc/accounts/%s", a.Host, a.AccountID)

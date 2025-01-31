@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/internal/build"
 	"github.com/databricks/cli/libs/cmdio"
@@ -18,6 +17,7 @@ import (
 	"github.com/databricks/cli/libs/log"
 	"github.com/databricks/databricks-sdk-go"
 	"github.com/databricks/databricks-sdk-go/config"
+	"github.com/databricks/databricks-sdk-go/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -30,10 +30,12 @@ type Entrypoint struct {
 	IsBundleAware         bool `yaml:"is_bundle_aware,omitempty"`
 }
 
-var ErrNoLoginConfig = errors.New("no login configuration found")
-var ErrMissingClusterID = errors.New("missing a cluster compatible with Databricks Connect")
-var ErrMissingWarehouseID = errors.New("missing a SQL warehouse")
-var ErrNotInTTY = errors.New("not in an interactive terminal")
+var (
+	ErrNoLoginConfig      = errors.New("no login configuration found")
+	ErrMissingClusterID   = errors.New("missing a cluster compatible with Databricks Connect")
+	ErrMissingWarehouseID = errors.New("missing a SQL warehouse")
+	ErrNotInTTY           = errors.New("not in an interactive terminal")
+)
 
 func (e *Entrypoint) NeedsCluster() bool {
 	if e.Installer == nil {
@@ -54,15 +56,15 @@ func (e *Entrypoint) NeedsWarehouse() bool {
 
 func (e *Entrypoint) Prepare(cmd *cobra.Command) (map[string]string, error) {
 	ctx := cmd.Context()
-	libDir := e.EffectiveLibDir(ctx)
+	libDir := e.EffectiveLibDir()
 	environment := map[string]string{
 		"DATABRICKS_CLI_VERSION":     build.GetInfo().Version,
-		"DATABRICKS_LABS_CACHE_DIR":  e.CacheDir(ctx),
-		"DATABRICKS_LABS_CONFIG_DIR": e.ConfigDir(ctx),
-		"DATABRICKS_LABS_STATE_DIR":  e.StateDir(ctx),
+		"DATABRICKS_LABS_CACHE_DIR":  e.CacheDir(),
+		"DATABRICKS_LABS_CONFIG_DIR": e.ConfigDir(),
+		"DATABRICKS_LABS_STATE_DIR":  e.StateDir(),
 		"DATABRICKS_LABS_LIB_DIR":    libDir,
 	}
-	if e.IsPythonProject(ctx) {
+	if e.IsPythonProject() {
 		e.preparePython(ctx, environment)
 	}
 	cfg, err := e.validLogin(cmd)
@@ -112,7 +114,7 @@ func (e *Entrypoint) preparePython(ctx context.Context, environment map[string]s
 	// Here we are also supporting the "src" layout for python projects.
 	//
 	// See https://docs.python.org/3/using/cmdline.html#envvar-PYTHONPATH
-	libDir := e.EffectiveLibDir(ctx)
+	libDir := e.EffectiveLibDir()
 	// The intention for every install is to be sandboxed - not dependent on anything else than Python binary.
 	// Having ability to override PYTHONPATH in the mix will break this assumption. Need strong evidence that
 	// this is really needed.
@@ -139,21 +141,28 @@ func (e *Entrypoint) joinPaths(paths ...string) string {
 	return strings.Join(paths, string(os.PathListSeparator))
 }
 
-func (e *Entrypoint) envAwareConfig(ctx context.Context) *config.Config {
+func (e *Entrypoint) envAwareConfig(ctx context.Context) (*config.Config, error) {
+	home, err := env.UserHomeDir(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &config.Config{
-		ConfigFile: filepath.Join(env.UserHomeDir(ctx), ".databrickscfg"),
+		ConfigFile: filepath.Join(home, ".databrickscfg"),
 		Loaders: []config.Loader{
 			env.NewConfigLoader(ctx),
 			config.ConfigAttributes,
 			config.ConfigFile,
 		},
-	}
+	}, nil
 }
 
-func (e *Entrypoint) envAwareConfigWithProfile(ctx context.Context, profile string) *config.Config {
-	cfg := e.envAwareConfig(ctx)
+func (e *Entrypoint) envAwareConfigWithProfile(ctx context.Context, profile string) (*config.Config, error) {
+	cfg, err := e.envAwareConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	cfg.Profile = profile
-	return cfg
+	return cfg, nil
 }
 
 func (e *Entrypoint) getLoginConfig(cmd *cobra.Command) (*loginConfig, *config.Config, error) {
@@ -164,11 +173,18 @@ func (e *Entrypoint) getLoginConfig(cmd *cobra.Command) (*loginConfig, *config.C
 	profileOverride := e.profileOverride(cmd)
 	if profileOverride != "" {
 		log.Infof(ctx, "Overriding login profile: %s", profileOverride)
-		return &loginConfig{}, e.envAwareConfigWithProfile(ctx, profileOverride), nil
+		cfg, err := e.envAwareConfigWithProfile(ctx, profileOverride)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &loginConfig{}, cfg, nil
 	}
 	lc, err := e.loadLoginConfig(ctx)
 	isNoLoginConfig := errors.Is(err, fs.ErrNotExist)
-	defaultConfig := e.envAwareConfig(ctx)
+	defaultConfig, err := e.envAwareConfig(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	if isNoLoginConfig && !e.IsBundleAware && e.isAuthConfigured(defaultConfig) {
 		log.Debugf(ctx, "Login is configured via environment variables")
 		return &loginConfig{}, defaultConfig, nil
@@ -176,25 +192,30 @@ func (e *Entrypoint) getLoginConfig(cmd *cobra.Command) (*loginConfig, *config.C
 	if isNoLoginConfig && !e.IsBundleAware {
 		return nil, nil, ErrNoLoginConfig
 	}
-	if !isNoLoginConfig && err != nil {
-		return nil, nil, fmt.Errorf("load: %w", err)
-	}
 	if e.IsAccountLevel {
 		log.Debugf(ctx, "Using account-level login profile: %s", lc.AccountProfile)
-		return lc, e.envAwareConfigWithProfile(ctx, lc.AccountProfile), nil
+		cfg, err := e.envAwareConfigWithProfile(ctx, lc.AccountProfile)
+		if err != nil {
+			return nil, nil, err
+		}
+		return lc, cfg, nil
 	}
 	if e.IsBundleAware {
-		err = root.TryConfigureBundle(cmd, []string{})
-		if err != nil {
+		b, diags := root.TryConfigureBundle(cmd)
+		if err := diags.Error(); err != nil {
 			return nil, nil, fmt.Errorf("bundle: %w", err)
 		}
-		if b := bundle.GetOrNil(cmd.Context()); b != nil {
+		if b != nil {
 			log.Infof(ctx, "Using login configuration from Databricks Asset Bundle")
 			return &loginConfig{}, b.WorkspaceClient().Config, nil
 		}
 	}
 	log.Debugf(ctx, "Using workspace-level login profile: %s", lc.WorkspaceProfile)
-	return lc, e.envAwareConfigWithProfile(ctx, lc.WorkspaceProfile), nil
+	cfg, err := e.envAwareConfigWithProfile(ctx, lc.WorkspaceProfile)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lc, cfg, nil
 }
 
 func (e *Entrypoint) validLogin(cmd *cobra.Command) (*config.Config, error) {
@@ -209,6 +230,8 @@ func (e *Entrypoint) validLogin(cmd *cobra.Command) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctx := cmd.Context()
+	logger.Debugf(ctx, "Resolved login: %s", config.ConfigAttributes.DebugString(cfg))
 	// merge ~/.databrickscfg and ~/.databricks/labs/x/config/login.json when
 	// it comes to project-specific configuration
 	if e.NeedsCluster() && cfg.ClusterID == "" {
@@ -217,8 +240,35 @@ func (e *Entrypoint) validLogin(cmd *cobra.Command) (*config.Config, error) {
 	if e.NeedsWarehouse() && cfg.WarehouseID == "" {
 		cfg.WarehouseID = lc.WarehouseID
 	}
+	// there's a lot of end-user friction for projects, that require account-level commands.
+	// this is mainly related to the fact, that, as of January 2024, workspace administrators
+	// do not necessarily have access to call account-level APIs. There are ongoing discussions
+	// on how to best implement this on a platform level.
+	//
+	// Current temporary workaround is creating dummy ~/.databrickscfg profile with `account_id`
+	// field, though it doesn't really remove the end-user friction, hence we don't require
+	// an account profile during installation (anymore) and just prompt for it, when context
+	// does require it. This also means that we always prompt for account-level commands, unless
+	// users specify a `--profile` flag.
 	isACC := cfg.IsAccountClient()
-	if e.IsAccountLevel && !isACC {
+	if e.IsAccountLevel && cfg.Profile == "" {
+		if !cmdio.IsPromptSupported(ctx) {
+			return nil, config.ErrCannotConfigureAuth
+		}
+		replaceCfg, err := e.envAwareConfig(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("replace config: %w", err)
+		}
+		err = lc.askAccountProfile(ctx, replaceCfg)
+		if err != nil {
+			return nil, fmt.Errorf("account: %w", err)
+		}
+		err = replaceCfg.EnsureResolved()
+		if err != nil {
+			return nil, fmt.Errorf("resolve: %w", err)
+		}
+		return replaceCfg, nil
+	} else if e.IsAccountLevel && !isACC {
 		return nil, databricks.ErrNotAccountClient
 	}
 	if e.NeedsCluster() && !isACC && cfg.ClusterID == "" {

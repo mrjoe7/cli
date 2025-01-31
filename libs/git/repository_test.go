@@ -1,12 +1,12 @@
 package git
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/databricks/cli/libs/vfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,7 @@ func newTestRepository(t *testing.T) *testRepository {
 	require.NoError(t, err)
 	defer f1.Close()
 
-	f1.WriteString(
+	_, err = f1.WriteString(
 		`[core]
 	repositoryformatversion = 0
 	filemode = true
@@ -35,6 +35,7 @@ func newTestRepository(t *testing.T) *testRepository {
 	ignorecase = true
 	precomposeunicode = true
 `)
+	require.NoError(t, err)
 
 	f2, err := os.Create(filepath.Join(tmp, ".git", "HEAD"))
 	require.NoError(t, err)
@@ -43,7 +44,7 @@ func newTestRepository(t *testing.T) *testRepository {
 	_, err = f2.WriteString(`ref: refs/heads/main`)
 	require.NoError(t, err)
 
-	repo, err := NewRepository(tmp)
+	repo, err := NewRepository(vfs.MustNew(tmp))
 	require.NoError(t, err)
 
 	return &testRepository{
@@ -53,7 +54,7 @@ func newTestRepository(t *testing.T) *testRepository {
 }
 
 func (testRepo *testRepository) checkoutCommit(commitId string) {
-	f, err := os.OpenFile(filepath.Join(testRepo.r.rootPath, ".git", "HEAD"), os.O_WRONLY|os.O_TRUNC, os.ModePerm)
+	f, err := os.OpenFile(filepath.Join(testRepo.r.Root(), ".git", "HEAD"), os.O_WRONLY|os.O_TRUNC, os.ModePerm)
 	require.NoError(testRepo.t, err)
 	defer f.Close()
 
@@ -61,9 +62,9 @@ func (testRepo *testRepository) checkoutCommit(commitId string) {
 	require.NoError(testRepo.t, err)
 }
 
-func (testRepo *testRepository) addBranch(name string, latestCommit string) {
+func (testRepo *testRepository) addBranch(name, latestCommit string) {
 	// create dir for branch head reference
-	branchDir := filepath.Join(testRepo.r.rootPath, ".git", "refs", "heads")
+	branchDir := filepath.Join(testRepo.r.Root(), ".git", "refs", "heads")
 	err := os.MkdirAll(branchDir, os.ModePerm)
 	require.NoError(testRepo.t, err)
 
@@ -78,7 +79,7 @@ func (testRepo *testRepository) addBranch(name string, latestCommit string) {
 }
 
 func (testRepo *testRepository) checkoutBranch(name string) {
-	f, err := os.OpenFile(filepath.Join(testRepo.r.rootPath, ".git", "HEAD"), os.O_WRONLY|os.O_TRUNC, os.ModePerm)
+	f, err := os.OpenFile(filepath.Join(testRepo.r.Root(), ".git", "HEAD"), os.O_WRONLY|os.O_TRUNC, os.ModePerm)
 	require.NoError(testRepo.t, err)
 	defer f.Close()
 
@@ -89,13 +90,12 @@ func (testRepo *testRepository) checkoutBranch(name string) {
 // add remote origin url to test repo
 func (testRepo *testRepository) addOriginUrl(url string) {
 	// open config in append mode
-	f, err := os.OpenFile(filepath.Join(testRepo.r.rootPath, ".git", "config"), os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	f, err := os.OpenFile(filepath.Join(testRepo.r.Root(), ".git", "config"), os.O_WRONLY|os.O_APPEND, os.ModePerm)
 	require.NoError(testRepo.t, err)
 	defer f.Close()
 
 	_, err = f.WriteString(
-		fmt.Sprintf(`[remote "origin"]
-	url = %s`, url))
+		"[remote \"origin\"]\n\turl = " + url)
 	require.NoError(testRepo.t, err)
 
 	// reload config to reflect the remote url
@@ -128,7 +128,7 @@ func (testRepo *testRepository) assertOriginUrl(expected string) {
 
 func TestRepository(t *testing.T) {
 	// Load this repository as test.
-	repo, err := NewRepository("../..")
+	repo, err := NewRepository(vfs.MustNew("../.."))
 	tr := testRepository{t, repo}
 	require.NoError(t, err)
 
@@ -142,7 +142,7 @@ func TestRepository(t *testing.T) {
 	assert.True(t, tr.Ignore("vendor/"))
 
 	// Check that ignores under testdata work.
-	assert.True(t, tr.Ignore(filepath.Join("libs", "git", "testdata", "root.ignoreme")))
+	assert.True(t, tr.Ignore("libs/git/testdata/root.ignoreme"))
 }
 
 func TestRepositoryGitConfigForEmptyRepo(t *testing.T) {
@@ -192,7 +192,7 @@ func TestRepositoryGitConfigForSshUrl(t *testing.T) {
 
 func TestRepositoryGitConfigWhenNotARepo(t *testing.T) {
 	tmp := t.TempDir()
-	repo, err := NewRepository(tmp)
+	repo, err := NewRepository(vfs.MustNew(tmp))
 	require.NoError(t, err)
 
 	branch, err := repo.CurrentBranch()
@@ -205,4 +205,29 @@ func TestRepositoryGitConfigWhenNotARepo(t *testing.T) {
 
 	originUrl := repo.OriginUrl()
 	assert.Equal(t, "", originUrl)
+}
+
+func TestRepositoryOriginUrlRemovesUserCreds(t *testing.T) {
+	tcases := []struct {
+		url      string
+		expected string
+	}{
+		{
+			url:      "https://username:token@github.com/databricks/foobar.git",
+			expected: "https://github.com/databricks/foobar.git",
+		},
+		{
+			// Note: The token is still considered and parsed as a username here.
+			// However credentials integrations by Git providers like GitHub
+			// allow for setting a PAT token as a username.
+			url:      "https://token@github.com/databricks/foobar.git",
+			expected: "https://github.com/databricks/foobar.git",
+		},
+	}
+
+	for _, tc := range tcases {
+		repo := newTestRepository(t)
+		repo.addOriginUrl(tc.url)
+		repo.assertOriginUrl(tc.expected)
+	}
 }

@@ -3,7 +3,7 @@ package bundle
 import (
 	"context"
 
-	"github.com/databricks/cli/libs/errs"
+	"github.com/databricks/cli/libs/diag"
 )
 
 type DeferredMutator struct {
@@ -15,19 +15,16 @@ func (d *DeferredMutator) Name() string {
 	return "deferred"
 }
 
-func Defer(mutator Mutator, finally Mutator) Mutator {
+func Defer(mutator, finally Mutator) Mutator {
 	return &DeferredMutator{
 		mutator: mutator,
 		finally: finally,
 	}
 }
 
-func (d *DeferredMutator) Apply(ctx context.Context, b *Bundle) error {
-	mainErr := Apply(ctx, b, d.mutator)
-	errOnFinish := Apply(ctx, b, d.finally)
-	if mainErr != nil || errOnFinish != nil {
-		return errs.FromMany(mainErr, errOnFinish)
-	}
-
-	return nil
+func (d *DeferredMutator) Apply(ctx context.Context, b *Bundle) diag.Diagnostics {
+	var diags diag.Diagnostics
+	diags = diags.Extend(Apply(ctx, b, d.mutator))
+	diags = diags.Extend(Apply(ctx, b, d.finally))
+	return diags
 }

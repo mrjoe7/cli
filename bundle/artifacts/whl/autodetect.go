@@ -11,12 +11,11 @@ import (
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
 	"github.com/databricks/cli/bundle/libraries"
-	"github.com/databricks/cli/libs/cmdio"
+	"github.com/databricks/cli/libs/diag"
 	"github.com/databricks/cli/libs/log"
 )
 
-type detectPkg struct {
-}
+type detectPkg struct{}
 
 func DetectPackage() bundle.Mutator {
 	return &detectPkg{}
@@ -26,32 +25,32 @@ func (m *detectPkg) Name() string {
 	return "artifacts.whl.AutoDetect"
 }
 
-func (m *detectPkg) Apply(ctx context.Context, b *bundle.Bundle) error {
-	wheelTasks := libraries.FindAllWheelTasksWithLocalLibraries(b)
-	if len(wheelTasks) == 0 {
-		log.Infof(ctx, "No local wheel tasks in databricks.yml config, skipping auto detect")
+func (m *detectPkg) Apply(ctx context.Context, b *bundle.Bundle) diag.Diagnostics {
+	tasks := libraries.FindTasksWithLocalLibraries(b)
+	if len(tasks) == 0 {
+		log.Infof(ctx, "No local tasks in databricks.yml config, skipping auto detect")
 		return nil
 	}
-	cmdio.LogString(ctx, "artifacts.whl.AutoDetect: Detecting Python wheel project...")
+	log.Infof(ctx, "Detecting Python wheel project...")
 
 	// checking if there is setup.py in the bundle root
-	setupPy := filepath.Join(b.Config.Path, "setup.py")
+	setupPy := filepath.Join(b.BundleRootPath, "setup.py")
 	_, err := os.Stat(setupPy)
 	if err != nil {
-		cmdio.LogString(ctx, "artifacts.whl.AutoDetect: No Python wheel project found at bundle root folder")
+		log.Infof(ctx, "No Python wheel project found at bundle root folder")
 		return nil
 	}
 
-	cmdio.LogString(ctx, fmt.Sprintf("artifacts.whl.AutoDetect: Found Python wheel project at %s", b.Config.Path))
+	log.Infof(ctx, "Found Python wheel project at %s", b.BundleRootPath)
 	module := extractModuleName(setupPy)
 
 	if b.Config.Artifacts == nil {
 		b.Config.Artifacts = make(map[string]*config.Artifact)
 	}
 
-	pkgPath, err := filepath.Abs(b.Config.Path)
+	pkgPath, err := filepath.Abs(b.BundleRootPath)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 	b.Config.Artifacts[module] = &config.Artifact{
 		Path: pkgPath,

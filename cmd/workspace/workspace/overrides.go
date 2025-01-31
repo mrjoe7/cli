@@ -17,8 +17,9 @@ import (
 
 func listOverride(listCmd *cobra.Command, listReq *workspace.ListWorkspaceRequest) {
 	listReq.Path = "/"
+	listCmd.Annotations["headerTemplate"] = cmdio.Heredoc(`
+	{{header "ID"}}	{{header "Type"}}	{{header "Language"}}	{{header "Path"}}`)
 	listCmd.Annotations["template"] = cmdio.Heredoc(`
-	{{header "ID"}}	{{header "Type"}}	{{header "Language"}}	{{header "Path"}}
 	{{range .}}{{green "%d" .ObjectId}}	{{blue "%s" .ObjectType}}	{{cyan "%s" .Language}}	{{.Path|cyan}}
 	{{end}}`)
 }
@@ -35,7 +36,7 @@ func exportOverride(exportCmd *cobra.Command, exportReq *workspace.ExportRequest
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 		if len(args) != 1 {
-			return fmt.Errorf("expected to have the absolute path of the object or directory")
+			return errors.New("expected to have the absolute path of the object or directory")
 		}
 		exportReq.Path = args[0]
 
@@ -51,7 +52,7 @@ func exportOverride(exportCmd *cobra.Command, exportReq *workspace.ExportRequest
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(filePath, b, 0755)
+		return os.WriteFile(filePath, b, 0o755)
 	}
 }
 
@@ -87,7 +88,6 @@ func importOverride(importCmd *cobra.Command, importReq *workspace.Import) {
 		err := originalRunE(cmd, args)
 		return wrapImportAPIErrors(err, importReq)
 	}
-
 }
 
 func init() {

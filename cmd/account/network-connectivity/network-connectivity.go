@@ -21,19 +21,22 @@ func New() *cobra.Command {
 		Use:   "network-connectivity",
 		Short: `These APIs provide configurations for the network connectivity of your workspaces for serverless compute resources.`,
 		Long: `These APIs provide configurations for the network connectivity of your
-  workspaces for serverless compute resources. This API provides stable subnets
-  for your workspace so that you can configure your firewalls on your Azure
-  Storage accounts to allow access from Databricks. You can also use the API to
-  provision private endpoints for Databricks to privately connect serverless
-  compute resources to your Azure resources using Azure Private Link. See
-  [configure serverless secure connectivity].
-  
-  [configure serverless secure connectivity]: https://learn.microsoft.com/azure/databricks/security/network/serverless-network-security`,
+  workspaces for serverless compute resources.`,
 		GroupID: "settings",
 		Annotations: map[string]string{
 			"package": "settings",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newCreateNetworkConnectivityConfiguration())
+	cmd.AddCommand(newCreatePrivateEndpointRule())
+	cmd.AddCommand(newDeleteNetworkConnectivityConfiguration())
+	cmd.AddCommand(newDeletePrivateEndpointRule())
+	cmd.AddCommand(newGetNetworkConnectivityConfiguration())
+	cmd.AddCommand(newGetPrivateEndpointRule())
+	cmd.AddCommand(newListNetworkConnectivityConfigurations())
+	cmd.AddCommand(newListPrivateEndpointRules())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -64,32 +67,26 @@ func newCreateNetworkConnectivityConfiguration() *cobra.Command {
 	cmd.Use = "create-network-connectivity-configuration NAME REGION"
 	cmd.Short = `Create a network connectivity configuration.`
 	cmd.Long = `Create a network connectivity configuration.
-  
-  Creates a network connectivity configuration (NCC), which provides stable
-  Azure service subnets when accessing your Azure Storage accounts. You can also
-  use a network connectivity configuration to create Databricks-managed private
-  endpoints so that Databricks serverless compute resources privately access
-  your resources.
-  
-  **IMPORTANT**: After you create the network connectivity configuration, you
-  must assign one or more workspaces to the new network connectivity
-  configuration. You can share one network connectivity configuration with
-  multiple workspaces from the same Azure region within the same Databricks
-  account. See [configure serverless secure connectivity].
-  
-  [configure serverless secure connectivity]: https://learn.microsoft.com/azure/databricks/security/network/serverless-network-security`
+
+  Arguments:
+    NAME: The name of the network connectivity configuration. The name can contain
+      alphanumeric characters, hyphens, and underscores. The length must be
+      between 3 and 30 characters. The name must match the regular expression
+      ^[0-9a-zA-Z-_]{3,30}$.
+    REGION: The region for the network connectivity configuration. Only workspaces in
+      the same region can be attached to the network connectivity configuration.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'name', 'region' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -99,9 +96,15 @@ func newCreateNetworkConnectivityConfiguration() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createNetworkConnectivityConfigurationJson.Unmarshal(&createNetworkConnectivityConfigurationReq)
-			if err != nil {
-				return err
+			diags := createNetworkConnectivityConfigurationJson.Unmarshal(&createNetworkConnectivityConfigurationReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -128,12 +131,6 @@ func newCreateNetworkConnectivityConfiguration() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreateNetworkConnectivityConfiguration())
-	})
 }
 
 // start create-private-endpoint-rule command
@@ -167,19 +164,26 @@ func newCreatePrivateEndpointRule() *cobra.Command {
   private endpoint created, make a GET request on the new private endpoint
   rule. See [serverless private link].
   
-  [serverless private link]: https://learn.microsoft.com/azure/databricks/security/network/serverless-network-security/serverless-private-link`
+  [serverless private link]: https://learn.microsoft.com/azure/databricks/security/network/serverless-network-security/serverless-private-link
+
+  Arguments:
+    NETWORK_CONNECTIVITY_CONFIG_ID: Your Network Connectvity Configuration ID.
+    RESOURCE_ID: The Azure resource ID of the target resource.
+    GROUP_ID: The sub-resource type (group ID) of the target resource. Note that to
+      connect to workspace root storage (root DBFS), you need two endpoints, one
+      for blob and one for dfs.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(1)(cmd, args)
+			err := root.ExactArgs(1)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, provide only NETWORK_CONNECTIVITY_CONFIG_ID as positional arguments. Provide 'resource_id', 'group_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -189,9 +193,15 @@ func newCreatePrivateEndpointRule() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createPrivateEndpointRuleJson.Unmarshal(&createPrivateEndpointRuleReq)
-			if err != nil {
-				return err
+			diags := createPrivateEndpointRuleJson.Unmarshal(&createPrivateEndpointRuleReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		createPrivateEndpointRuleReq.NetworkConnectivityConfigId = args[0]
@@ -224,12 +234,6 @@ func newCreatePrivateEndpointRule() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreatePrivateEndpointRule())
-	})
-}
-
 // start delete-network-connectivity-configuration command
 
 // Slice with functions to override default command behavior.
@@ -250,12 +254,15 @@ func newDeleteNetworkConnectivityConfiguration() *cobra.Command {
 	cmd.Short = `Delete a network connectivity configuration.`
 	cmd.Long = `Delete a network connectivity configuration.
   
-  Deletes a network connectivity configuration.`
+  Deletes a network connectivity configuration.
+
+  Arguments:
+    NETWORK_CONNECTIVITY_CONFIG_ID: Your Network Connectvity Configuration ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -285,12 +292,6 @@ func newDeleteNetworkConnectivityConfiguration() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteNetworkConnectivityConfiguration())
-	})
-}
-
 // start delete-private-endpoint-rule command
 
 // Slice with functions to override default command behavior.
@@ -311,16 +312,21 @@ func newDeletePrivateEndpointRule() *cobra.Command {
 	cmd.Short = `Delete a private endpoint rule.`
 	cmd.Long = `Delete a private endpoint rule.
   
-  Initiates deleting a private endpoint rule. The private endpoint will be
-  deactivated and will be purged after seven days of deactivation. When a
-  private endpoint is in deactivated state, deactivated field is set to true
-  and the private endpoint is not available to your serverless compute
-  resources.`
+  Initiates deleting a private endpoint rule. If the connection state is PENDING
+  or EXPIRED, the private endpoint is immediately deleted. Otherwise, the
+  private endpoint is deactivated and will be deleted after seven days of
+  deactivation. When a private endpoint is deactivated, the deactivated field
+  is set to true and the private endpoint is not available to your serverless
+  compute resources.
+
+  Arguments:
+    NETWORK_CONNECTIVITY_CONFIG_ID: Your Network Connectvity Configuration ID.
+    PRIVATE_ENDPOINT_RULE_ID: Your private endpoint rule ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -351,12 +357,6 @@ func newDeletePrivateEndpointRule() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeletePrivateEndpointRule())
-	})
-}
-
 // start get-network-connectivity-configuration command
 
 // Slice with functions to override default command behavior.
@@ -377,12 +377,15 @@ func newGetNetworkConnectivityConfiguration() *cobra.Command {
 	cmd.Short = `Get a network connectivity configuration.`
 	cmd.Long = `Get a network connectivity configuration.
   
-  Gets a network connectivity configuration.`
+  Gets a network connectivity configuration.
+
+  Arguments:
+    NETWORK_CONNECTIVITY_CONFIG_ID: Your Network Connectvity Configuration ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -412,12 +415,6 @@ func newGetNetworkConnectivityConfiguration() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetNetworkConnectivityConfiguration())
-	})
-}
-
 // start get-private-endpoint-rule command
 
 // Slice with functions to override default command behavior.
@@ -438,12 +435,16 @@ func newGetPrivateEndpointRule() *cobra.Command {
 	cmd.Short = `Get a private endpoint rule.`
 	cmd.Long = `Get a private endpoint rule.
   
-  Gets the private endpoint rule.`
+  Gets the private endpoint rule.
+
+  Arguments:
+    NETWORK_CONNECTIVITY_CONFIG_ID: Your Network Connectvity Configuration ID.
+    PRIVATE_ENDPOINT_RULE_ID: Your private endpoint rule ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -474,10 +475,113 @@ func newGetPrivateEndpointRule() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPrivateEndpointRule())
-	})
+// start list-network-connectivity-configurations command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var listNetworkConnectivityConfigurationsOverrides []func(
+	*cobra.Command,
+	*settings.ListNetworkConnectivityConfigurationsRequest,
+)
+
+func newListNetworkConnectivityConfigurations() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var listNetworkConnectivityConfigurationsReq settings.ListNetworkConnectivityConfigurationsRequest
+
+	// TODO: short flags
+
+	cmd.Flags().StringVar(&listNetworkConnectivityConfigurationsReq.PageToken, "page-token", listNetworkConnectivityConfigurationsReq.PageToken, `Pagination token to go to next page based on previous query.`)
+
+	cmd.Use = "list-network-connectivity-configurations"
+	cmd.Short = `List network connectivity configurations.`
+	cmd.Long = `List network connectivity configurations.
+  
+  Gets an array of network connectivity configurations.`
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(0)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustAccountClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		a := root.AccountClient(ctx)
+
+		response := a.NetworkConnectivity.ListNetworkConnectivityConfigurations(ctx, listNetworkConnectivityConfigurationsReq)
+		return cmdio.RenderIterator(ctx, response)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range listNetworkConnectivityConfigurationsOverrides {
+		fn(cmd, &listNetworkConnectivityConfigurationsReq)
+	}
+
+	return cmd
+}
+
+// start list-private-endpoint-rules command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var listPrivateEndpointRulesOverrides []func(
+	*cobra.Command,
+	*settings.ListPrivateEndpointRulesRequest,
+)
+
+func newListPrivateEndpointRules() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var listPrivateEndpointRulesReq settings.ListPrivateEndpointRulesRequest
+
+	// TODO: short flags
+
+	cmd.Flags().StringVar(&listPrivateEndpointRulesReq.PageToken, "page-token", listPrivateEndpointRulesReq.PageToken, `Pagination token to go to next page based on previous query.`)
+
+	cmd.Use = "list-private-endpoint-rules NETWORK_CONNECTIVITY_CONFIG_ID"
+	cmd.Short = `List private endpoint rules.`
+	cmd.Long = `List private endpoint rules.
+  
+  Gets an array of private endpoint rules.
+
+  Arguments:
+    NETWORK_CONNECTIVITY_CONFIG_ID: Your Network Connectvity Configuration ID.`
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustAccountClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		a := root.AccountClient(ctx)
+
+		listPrivateEndpointRulesReq.NetworkConnectivityConfigId = args[0]
+
+		response := a.NetworkConnectivity.ListPrivateEndpointRules(ctx, listPrivateEndpointRulesReq)
+		return cmdio.RenderIterator(ctx, response)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range listPrivateEndpointRulesOverrides {
+		fn(cmd, &listPrivateEndpointRulesReq)
+	}
+
+	return cmd
 }
 
 // end service NetworkConnectivity

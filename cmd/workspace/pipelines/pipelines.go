@@ -41,6 +41,22 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newGetPermissions())
+	cmd.AddCommand(newGetUpdate())
+	cmd.AddCommand(newListPipelineEvents())
+	cmd.AddCommand(newListPipelines())
+	cmd.AddCommand(newListUpdates())
+	cmd.AddCommand(newSetPermissions())
+	cmd.AddCommand(newStartUpdate())
+	cmd.AddCommand(newStop())
+	cmd.AddCommand(newUpdate())
+	cmd.AddCommand(newUpdatePermissions())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -82,9 +98,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
@@ -107,12 +129,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -180,12 +196,6 @@ func newDelete() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
 }
 
 // start get command
@@ -258,12 +268,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start get-permission-levels command
 
 // Slice with functions to override default command behavior.
@@ -284,7 +288,10 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get pipeline permission levels.`
 	cmd.Long = `Get pipeline permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    PIPELINE_ID: The pipeline for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -331,12 +338,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start get-permissions command
 
 // Slice with functions to override default command behavior.
@@ -358,7 +359,10 @@ func newGetPermissions() *cobra.Command {
 	cmd.Long = `Get pipeline permissions.
   
   Gets the permissions of a pipeline. Pipelines can inherit permissions from
-  their root object.`
+  their root object.
+
+  Arguments:
+    PIPELINE_ID: The pipeline for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -405,12 +409,6 @@ func newGetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissions())
-	})
-}
-
 // start get-update command
 
 // Slice with functions to override default command behavior.
@@ -431,12 +429,16 @@ func newGetUpdate() *cobra.Command {
 	cmd.Short = `Get a pipeline update.`
 	cmd.Long = `Get a pipeline update.
   
-  Gets an update from an active pipeline.`
+  Gets an update from an active pipeline.
+
+  Arguments:
+    PIPELINE_ID: The ID of the pipeline.
+    UPDATE_ID: The ID of the update.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -465,12 +467,6 @@ func newGetUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetUpdate())
-	})
 }
 
 // start list-pipeline-events command
@@ -526,11 +522,8 @@ func newListPipelineEvents() *cobra.Command {
 		}
 		listPipelineEventsReq.PipelineId = args[0]
 
-		response, err := w.Pipelines.ListPipelineEventsAll(ctx, listPipelineEventsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Pipelines.ListPipelineEvents(ctx, listPipelineEventsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -543,12 +536,6 @@ func newListPipelineEvents() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListPipelineEvents())
-	})
 }
 
 // start list-pipelines command
@@ -581,7 +568,7 @@ func newListPipelines() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -590,11 +577,8 @@ func newListPipelines() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.Pipelines.ListPipelinesAll(ctx, listPipelinesReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Pipelines.ListPipelines(ctx, listPipelinesReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -607,12 +591,6 @@ func newListPipelines() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListPipelines())
-	})
 }
 
 // start list-updates command
@@ -639,7 +617,10 @@ func newListUpdates() *cobra.Command {
 	cmd.Short = `List pipeline updates.`
 	cmd.Long = `List pipeline updates.
   
-  List updates for an active pipeline.`
+  List updates for an active pipeline.
+
+  Arguments:
+    PIPELINE_ID: The pipeline to return updates for.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -686,102 +667,6 @@ func newListUpdates() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListUpdates())
-	})
-}
-
-// start reset command
-
-// Slice with functions to override default command behavior.
-// Functions can be added from the `init()` function in manually curated files in this directory.
-var resetOverrides []func(
-	*cobra.Command,
-	*pipelines.ResetRequest,
-)
-
-func newReset() *cobra.Command {
-	cmd := &cobra.Command{}
-
-	var resetReq pipelines.ResetRequest
-
-	var resetSkipWait bool
-	var resetTimeout time.Duration
-
-	cmd.Flags().BoolVar(&resetSkipWait, "no-wait", resetSkipWait, `do not wait to reach RUNNING state`)
-	cmd.Flags().DurationVar(&resetTimeout, "timeout", 20*time.Minute, `maximum amount of time to reach RUNNING state`)
-	// TODO: short flags
-
-	cmd.Use = "reset PIPELINE_ID"
-	cmd.Short = `Reset a pipeline.`
-	cmd.Long = `Reset a pipeline.
-  
-  Resets a pipeline.`
-
-	cmd.Annotations = make(map[string]string)
-
-	cmd.PreRunE = root.MustWorkspaceClient
-	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
-		ctx := cmd.Context()
-		w := root.WorkspaceClient(ctx)
-
-		if len(args) == 0 {
-			promptSpinner := cmdio.Spinner(ctx)
-			promptSpinner <- "No PIPELINE_ID argument specified. Loading names for Pipelines drop-down."
-			names, err := w.Pipelines.PipelineStateInfoNameToPipelineIdMap(ctx, pipelines.ListPipelinesRequest{})
-			close(promptSpinner)
-			if err != nil {
-				return fmt.Errorf("failed to load names for Pipelines drop-down. Please manually specify required arguments. Original error: %w", err)
-			}
-			id, err := cmdio.Select(ctx, names, "")
-			if err != nil {
-				return err
-			}
-			args = append(args, id)
-		}
-		if len(args) != 1 {
-			return fmt.Errorf("expected to have ")
-		}
-		resetReq.PipelineId = args[0]
-
-		wait, err := w.Pipelines.Reset(ctx, resetReq)
-		if err != nil {
-			return err
-		}
-		if resetSkipWait {
-			return nil
-		}
-		spinner := cmdio.Spinner(ctx)
-		info, err := wait.OnProgress(func(i *pipelines.GetPipelineResponse) {
-			statusMessage := i.Cause
-			spinner <- statusMessage
-		}).GetWithTimeout(resetTimeout)
-		close(spinner)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, info)
-	}
-
-	// Disable completions since they are not applicable.
-	// Can be overridden by manual implementation in `override.go`.
-	cmd.ValidArgsFunction = cobra.NoFileCompletions
-
-	// Apply optional overrides to this command.
-	for _, fn := range resetOverrides {
-		fn(cmd, &resetReq)
-	}
-
-	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newReset())
-	})
-}
-
 // start set-permissions command
 
 // Slice with functions to override default command behavior.
@@ -806,8 +691,12 @@ func newSetPermissions() *cobra.Command {
 	cmd.Short = `Set pipeline permissions.`
 	cmd.Long = `Set pipeline permissions.
   
-  Sets permissions on a pipeline. Pipelines can inherit permissions from their
-  root object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their root object.
+
+  Arguments:
+    PIPELINE_ID: The pipeline for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -817,9 +706,15 @@ func newSetPermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setPermissionsJson.Unmarshal(&setPermissionsReq)
-			if err != nil {
-				return err
+			diags := setPermissionsJson.Unmarshal(&setPermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -860,12 +755,6 @@ func newSetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetPermissions())
-	})
-}
-
 // start start-update command
 
 // Slice with functions to override default command behavior.
@@ -884,10 +773,18 @@ func newStartUpdate() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&startUpdateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Flags().Var(&startUpdateReq.Cause, "cause", ``)
+	cmd.Flags().Var(&startUpdateReq.Cause, "cause", `. Supported values: [
+  API_CALL,
+  JOB_TASK,
+  RETRY_ON_FAILURE,
+  SCHEMA_CHANGE,
+  SERVICE_UPGRADE,
+  USER_ACTION,
+]`)
 	cmd.Flags().BoolVar(&startUpdateReq.FullRefresh, "full-refresh", startUpdateReq.FullRefresh, `If true, this update will reset all tables before running.`)
 	// TODO: array: full_refresh_selection
 	// TODO: array: refresh_selection
+	cmd.Flags().BoolVar(&startUpdateReq.ValidateOnly, "validate-only", startUpdateReq.ValidateOnly, `If true, this update only validates the correctness of pipeline source code but does not materialize or publish any datasets.`)
 
 	cmd.Use = "start-update PIPELINE_ID"
 	cmd.Short = `Start a pipeline.`
@@ -904,9 +801,15 @@ func newStartUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = startUpdateJson.Unmarshal(&startUpdateReq)
-			if err != nil {
-				return err
+			diags := startUpdateJson.Unmarshal(&startUpdateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -945,12 +848,6 @@ func newStartUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newStartUpdate())
-	})
 }
 
 // start stop command
@@ -1038,12 +935,6 @@ func newStop() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newStop())
-	})
-}
-
 // start update command
 
 // Slice with functions to override default command behavior.
@@ -1063,21 +954,28 @@ func newUpdate() *cobra.Command {
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	cmd.Flags().BoolVar(&updateReq.AllowDuplicateNames, "allow-duplicate-names", updateReq.AllowDuplicateNames, `If false, deployment will fail if name has changed and conflicts the name of another pipeline.`)
+	cmd.Flags().StringVar(&updateReq.BudgetPolicyId, "budget-policy-id", updateReq.BudgetPolicyId, `Budget policy of this pipeline.`)
 	cmd.Flags().StringVar(&updateReq.Catalog, "catalog", updateReq.Catalog, `A catalog in Unity Catalog to publish data from this pipeline to.`)
 	cmd.Flags().StringVar(&updateReq.Channel, "channel", updateReq.Channel, `DLT Release Channel that specifies which version to use.`)
 	// TODO: array: clusters
 	// TODO: map via StringToStringVar: configuration
 	cmd.Flags().BoolVar(&updateReq.Continuous, "continuous", updateReq.Continuous, `Whether the pipeline is continuous or triggered.`)
+	// TODO: complex arg: deployment
 	cmd.Flags().BoolVar(&updateReq.Development, "development", updateReq.Development, `Whether the pipeline is in Development mode.`)
 	cmd.Flags().StringVar(&updateReq.Edition, "edition", updateReq.Edition, `Pipeline product edition.`)
 	cmd.Flags().Int64Var(&updateReq.ExpectedLastModified, "expected-last-modified", updateReq.ExpectedLastModified, `If present, the last-modified time of the pipeline settings before the edit.`)
 	// TODO: complex arg: filters
+	// TODO: complex arg: gateway_definition
 	cmd.Flags().StringVar(&updateReq.Id, "id", updateReq.Id, `Unique identifier for this pipeline.`)
+	// TODO: complex arg: ingestion_definition
 	// TODO: array: libraries
 	cmd.Flags().StringVar(&updateReq.Name, "name", updateReq.Name, `Friendly identifier for this pipeline.`)
 	// TODO: array: notifications
 	cmd.Flags().BoolVar(&updateReq.Photon, "photon", updateReq.Photon, `Whether Photon is enabled for this pipeline.`)
 	cmd.Flags().StringVar(&updateReq.PipelineId, "pipeline-id", updateReq.PipelineId, `Unique identifier for this pipeline.`)
+	// TODO: complex arg: restart_window
+	// TODO: complex arg: run_as
+	cmd.Flags().StringVar(&updateReq.Schema, "schema", updateReq.Schema, `The default schema (database) where tables are read from or published to.`)
 	cmd.Flags().BoolVar(&updateReq.Serverless, "serverless", updateReq.Serverless, `Whether serverless compute is enabled for this pipeline.`)
 	cmd.Flags().StringVar(&updateReq.Storage, "storage", updateReq.Storage, `DBFS root directory for storing checkpoints and tables.`)
 	cmd.Flags().StringVar(&updateReq.Target, "target", updateReq.Target, `Target schema (database) to add tables in this pipeline to.`)
@@ -1087,7 +985,10 @@ func newUpdate() *cobra.Command {
 	cmd.Short = `Edit a pipeline.`
 	cmd.Long = `Edit a pipeline.
   
-  Updates a pipeline with the supplied configuration.`
+  Updates a pipeline with the supplied configuration.
+
+  Arguments:
+    PIPELINE_ID: Unique identifier for this pipeline.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -1097,9 +998,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -1140,12 +1047,6 @@ func newUpdate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
-}
-
 // start update-permissions command
 
 // Slice with functions to override default command behavior.
@@ -1171,7 +1072,10 @@ func newUpdatePermissions() *cobra.Command {
 	cmd.Long = `Update pipeline permissions.
   
   Updates the permissions on a pipeline. Pipelines can inherit permissions from
-  their root object.`
+  their root object.
+
+  Arguments:
+    PIPELINE_ID: The pipeline for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -1181,9 +1085,15 @@ func newUpdatePermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updatePermissionsJson.Unmarshal(&updatePermissionsReq)
-			if err != nil {
-				return err
+			diags := updatePermissionsJson.Unmarshal(&updatePermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -1222,12 +1132,6 @@ func newUpdatePermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdatePermissions())
-	})
 }
 
 // end service Pipelines

@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/databricks/cli/bundle"
+	"github.com/databricks/cli/bundle/deploy"
 	"github.com/databricks/cli/libs/filer"
 	"github.com/stretchr/testify/require"
 )
 
-// identityFiler returns a filerFunc that returns the specified filer.
-func identityFiler(f filer.Filer) filerFunc {
+// identityFiler returns a FilerFactory that returns the specified filer.
+func identityFiler(f filer.Filer) deploy.FilerFactory {
 	return func(_ *bundle.Bundle) (filer.Filer, error) {
 		return f, nil
 	}
@@ -25,19 +26,19 @@ func localStateFile(t *testing.T, ctx context.Context, b *bundle.Bundle) string 
 	return filepath.Join(dir, TerraformStateFileName)
 }
 
-func readLocalState(t *testing.T, ctx context.Context, b *bundle.Bundle) map[string]int {
+func readLocalState(t *testing.T, ctx context.Context, b *bundle.Bundle) map[string]any {
 	f, err := os.Open(localStateFile(t, ctx, b))
 	require.NoError(t, err)
 	defer f.Close()
 
-	var contents map[string]int
+	var contents map[string]any
 	dec := json.NewDecoder(f)
 	err = dec.Decode(&contents)
 	require.NoError(t, err)
 	return contents
 }
 
-func writeLocalState(t *testing.T, ctx context.Context, b *bundle.Bundle, contents map[string]int) {
+func writeLocalState(t *testing.T, ctx context.Context, b *bundle.Bundle, contents map[string]any) {
 	f, err := os.Create(localStateFile(t, ctx, b))
 	require.NoError(t, err)
 	defer f.Close()

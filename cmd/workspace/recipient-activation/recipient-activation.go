@@ -33,6 +33,10 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newGetActivationUrlInfo())
+	cmd.AddCommand(newRetrieveToken())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -61,12 +65,15 @@ func newGetActivationUrlInfo() *cobra.Command {
 	cmd.Short = `Get a share activation URL.`
 	cmd.Long = `Get a share activation URL.
   
-  Gets an activation URL for a share.`
+  Gets an activation URL for a share.
+
+  Arguments:
+    ACTIVATION_URL: The one time activation url. It also accepts activation token.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -96,12 +103,6 @@ func newGetActivationUrlInfo() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetActivationUrlInfo())
-	})
-}
-
 // start retrieve-token command
 
 // Slice with functions to override default command behavior.
@@ -123,12 +124,15 @@ func newRetrieveToken() *cobra.Command {
 	cmd.Long = `Get an access token.
   
   Retrieve access token with an activation url. This is a public API without any
-  authentication.`
+  authentication.
+
+  Arguments:
+    ACTIVATION_URL: The one time activation url. It also accepts activation token.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -156,12 +160,6 @@ func newRetrieveToken() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newRetrieveToken())
-	})
 }
 
 // end service RecipientActivation

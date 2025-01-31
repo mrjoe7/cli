@@ -1,7 +1,12 @@
 package resources
 
 import (
-	"github.com/databricks/cli/bundle/config/paths"
+	"context"
+	"net/url"
+	"strings"
+
+	"github.com/databricks/cli/libs/log"
+	"github.com/databricks/databricks-sdk-go"
 	"github.com/databricks/databricks-sdk-go/marshal"
 	"github.com/databricks/databricks-sdk-go/service/catalog"
 )
@@ -14,15 +19,14 @@ type RegisteredModel struct {
 	// This represents the id which is the full name of the model
 	// (catalog_name.schema_name.model_name) that can be used
 	// as a reference in other resources. This value is returned by terraform.
-	ID string
-
-	// Path to config file where the resource is defined. All bundle resources
-	// include this for interpolation purposes.
-	paths.Paths
+	ID string `json:"id,omitempty" bundle:"readonly"`
 
 	// This represents the input args for terraform, and will get converted
 	// to a HCL representation for CRUD
 	*catalog.CreateRegisteredModelRequest
+
+	ModifiedStatus ModifiedStatus `json:"modified_status,omitempty" bundle:"internal"`
+	URL            string         `json:"url,omitempty" bundle:"internal"`
 }
 
 func (s *RegisteredModel) UnmarshalJSON(b []byte) error {
@@ -31,4 +35,39 @@ func (s *RegisteredModel) UnmarshalJSON(b []byte) error {
 
 func (s RegisteredModel) MarshalJSON() ([]byte, error) {
 	return marshal.Marshal(s)
+}
+
+func (s *RegisteredModel) Exists(ctx context.Context, w *databricks.WorkspaceClient, id string) (bool, error) {
+	_, err := w.RegisteredModels.Get(ctx, catalog.GetRegisteredModelRequest{
+		FullName: id,
+	})
+	if err != nil {
+		log.Debugf(ctx, "registered model %s does not exist", id)
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *RegisteredModel) TerraformResourceName() string {
+	return "databricks_registered_model"
+}
+
+func (s *RegisteredModel) InitializeURL(baseURL url.URL) {
+	if s.ID == "" {
+		return
+	}
+	baseURL.Path = "explore/data/models/" + strings.ReplaceAll(s.ID, ".", "/")
+	s.URL = baseURL.String()
+}
+
+func (s *RegisteredModel) GetName() string {
+	return s.Name
+}
+
+func (s *RegisteredModel) GetURL() string {
+	return s.URL
+}
+
+func (s *RegisteredModel) IsNil() bool {
+	return s.CreateRegisteredModelRequest == nil
 }

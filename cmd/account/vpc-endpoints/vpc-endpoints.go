@@ -27,6 +27,12 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -73,19 +79,22 @@ func newCreate() *cobra.Command {
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
   [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
   [VPC endpoint]: https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html
-  [endpoint service]: https://docs.aws.amazon.com/vpc/latest/privatelink/privatelink-share-your-services.html`
+  [endpoint service]: https://docs.aws.amazon.com/vpc/latest/privatelink/privatelink-share-your-services.html
+
+  Arguments:
+    VPC_ENDPOINT_NAME: The human-readable name of the storage configuration.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'vpc_endpoint_name' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -95,9 +104,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -121,12 +136,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -157,7 +166,10 @@ func newDelete() *cobra.Command {
   
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
   [AWS VPC endpoint]: https://docs.aws.amazon.com/vpc/latest/privatelink/concepts.html
-  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html`
+  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
+
+  Arguments:
+    VPC_ENDPOINT_ID: Databricks VPC endpoint ID.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -204,12 +216,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -234,7 +240,10 @@ func newGet() *cobra.Command {
   AWS used to communicate privately with Databricks over [AWS PrivateLink].
   
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
-  [VPC endpoint]: https://docs.aws.amazon.com/vpc/latest/privatelink/concepts.html`
+  [VPC endpoint]: https://docs.aws.amazon.com/vpc/latest/privatelink/concepts.html
+
+  Arguments:
+    VPC_ENDPOINT_ID: Databricks VPC endpoint ID.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -279,12 +288,6 @@ func newGet() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
 }
 
 // start list command
@@ -332,12 +335,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service VpcEndpoints

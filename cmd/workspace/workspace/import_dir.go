@@ -93,14 +93,14 @@ func (opts importDirOptions) callback(ctx context.Context, workspaceFiler filer.
 				// Emit file skipped event with the appropriate template
 				fileSkippedEvent := newFileSkippedEvent(localName, path.Join(targetDir, remoteName))
 				template := "{{.SourcePath}} -> {{.TargetPath}} (skipped; already exists)\n"
-				return cmdio.RenderWithTemplate(ctx, fileSkippedEvent, template)
+				return cmdio.RenderWithTemplate(ctx, fileSkippedEvent, "", template)
 			}
 			if err != nil {
 				return err
 			}
 		}
 		fileImportedEvent := newFileImportedEvent(localName, path.Join(targetDir, remoteName))
-		return cmdio.RenderWithTemplate(ctx, fileImportedEvent, "{{.SourcePath}} -> {{.TargetPath}}\n")
+		return cmdio.RenderWithTemplate(ctx, fileImportedEvent, "", "{{.SourcePath}} -> {{.TargetPath}}\n")
 	}
 }
 
@@ -119,7 +119,7 @@ Notebooks will have their extensions (one of .scala, .py, .sql, .ipynb, .r) stri
 `
 
 	cmd.Annotations = make(map[string]string)
-	cmd.Args = cobra.ExactArgs(2)
+	cmd.Args = root.ExactArgs(2)
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -134,8 +134,7 @@ Notebooks will have their extensions (one of .scala, .py, .sql, .ipynb, .r) stri
 			return err
 		}
 
-		// TODO: print progress events on stderr instead: https://github.com/databricks/cli/issues/448
-		err = cmdio.RenderJson(ctx, newImportStartedEvent(opts.sourceDir))
+		err = cmdio.RenderWithTemplate(ctx, newImportStartedEvent(opts.sourceDir), "", "Importing files from {{.SourcePath}}\n")
 		if err != nil {
 			return err
 		}
@@ -145,7 +144,7 @@ Notebooks will have their extensions (one of .scala, .py, .sql, .ipynb, .r) stri
 		if err != nil {
 			return err
 		}
-		return cmdio.RenderJson(ctx, newImportCompletedEvent(opts.targetDir))
+		return cmdio.RenderWithTemplate(ctx, newImportCompletedEvent(opts.targetDir), "", "Import complete\n")
 	}
 
 	return cmd

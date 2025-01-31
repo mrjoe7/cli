@@ -3,21 +3,56 @@ package fileset
 import (
 	"fmt"
 	"io/fs"
-	"os"
+	pathlib "path"
 	"path/filepath"
+	"slices"
+
+	"github.com/databricks/cli/libs/vfs"
 )
 
-// FileSet facilitates fast recursive file listing of a path.
+// FileSet facilitates recursive file listing for paths rooted at a given directory.
 // It optionally takes into account ignore rules through the [Ignorer] interface.
 type FileSet struct {
-	root   string
+	// Root path of the fileset.
+	root vfs.Path
+
+	// Paths to include in the fileset.
+	// Files are included as-is (if not ignored) and directories are traversed recursively.
+	// Defaults to []string{"."} if not specified.
+	paths []string
+
+	// Ignorer interface to check if a file or directory should be ignored.
 	ignore Ignorer
 }
 
 // New returns a [FileSet] for the given root path.
-func New(root string) *FileSet {
+// It optionally accepts a list of paths relative to the root to include in the fileset.
+// If not specified, it defaults to including all files in the root path.
+func New(root vfs.Path, args ...[]string) *FileSet {
+	// Default to including all files in the root path.
+	if len(args) == 0 {
+		args = [][]string{{"."}}
+	}
+
+	// Collect list of normalized and cleaned paths.
+	var paths []string
+	for _, arg := range args {
+		for _, path := range arg {
+			path = filepath.ToSlash(path)
+			path = pathlib.Clean(path)
+
+			// Skip path if it's already in the list.
+			if slices.Contains(paths, path) {
+				continue
+			}
+
+			paths = append(paths, path)
+		}
+	}
+
 	return &FileSet{
-		root:   filepath.Clean(root),
+		root:   root,
+		paths:  paths,
 		ignore: nopIgnorer{},
 	}
 }
@@ -32,59 +67,67 @@ func (w *FileSet) SetIgnorer(ignore Ignorer) {
 	w.ignore = ignore
 }
 
-// Return root for fileset.
-func (w *FileSet) Root() string {
-	return w.root
-}
-
-// Return all tracked files for Repo
-func (w *FileSet) All() ([]File, error) {
-	return w.recursiveListFiles()
+// Files returns performs recursive listing on all configured paths and returns
+// the collection of files it finds (and are not ignored).
+// The returned slice does not contain duplicates.
+// The order of files in the slice is stable.
+func (w *FileSet) Files() (out []File, err error) {
+	seen := make(map[string]struct{})
+	for _, p := range w.paths {
+		files, err := w.recursiveListFiles(p, seen)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, files...)
+	}
+	return out, nil
 }
 
 // Recursively traverses dir in a depth first manner and returns a list of all files
 // that are being tracked in the FileSet (ie not being ignored for matching one of the
 // patterns in w.ignore)
-func (w *FileSet) recursiveListFiles() (fileList []File, err error) {
-	err = filepath.WalkDir(w.root, func(path string, d fs.DirEntry, err error) error {
+func (w *FileSet) recursiveListFiles(path string, seen map[string]struct{}) (out []File, err error) {
+	err = fs.WalkDir(w.root, path, func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		relPath, err := filepath.Rel(w.root, path)
-		if err != nil {
-			return err
-		}
-
-		// skip symlinks
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
 
-		if d.IsDir() {
-			ign, err := w.ignore.IgnoreDirectory(relPath)
+		switch {
+		case info.Mode().IsDir():
+			ign, err := w.ignore.IgnoreDirectory(name)
 			if err != nil {
-				return fmt.Errorf("cannot check if %s should be ignored: %w", relPath, err)
+				return fmt.Errorf("cannot check if %s should be ignored: %w", name, err)
 			}
 			if ign {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
-			return nil
+
+		case info.Mode().IsRegular():
+			ign, err := w.ignore.IgnoreFile(name)
+			if err != nil {
+				return fmt.Errorf("cannot check if %s should be ignored: %w", name, err)
+			}
+			if ign {
+				return nil
+			}
+
+			// Skip duplicates
+			if _, ok := seen[name]; ok {
+				return nil
+			}
+
+			seen[name] = struct{}{}
+			out = append(out, NewFile(w.root, d, name))
+
+		default:
+			// Skip non-regular files (e.g. symlinks).
 		}
 
-		ign, err := w.ignore.IgnoreFile(relPath)
-		if err != nil {
-			return fmt.Errorf("cannot check if %s should be ignored: %w", relPath, err)
-		}
-		if ign {
-			return nil
-		}
-
-		fileList = append(fileList, File{d, path, relPath})
 		return nil
 	})
 	return

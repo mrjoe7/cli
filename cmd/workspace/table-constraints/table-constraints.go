@@ -39,6 +39,10 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -88,9 +92,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
@@ -113,12 +123,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -149,12 +153,19 @@ func newDelete() *cobra.Command {
   schema, and be the owner of the table. - if __cascade__ argument is **true**,
   the user must have the following permissions on all of the child tables: the
   **USE_CATALOG** privilege on the table's catalog, the **USE_SCHEMA** privilege
-  on the table's schema, and be the owner of the table.`
+  on the table's schema, and be the owner of the table.
+
+  Arguments:
+    FULL_NAME: Full name of the table referenced by the constraint.
+    CONSTRAINT_NAME: The name of the constraint to delete.
+    CASCADE: If true, try deleting all child constraints of the current constraint. If
+      false, reject this operation if the current constraint has any child
+      constraints.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -187,12 +198,6 @@ func newDelete() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
 }
 
 // end service TableConstraints

@@ -1,9 +1,12 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/databricks/cli/bundle/config/resources"
+	"github.com/databricks/databricks-sdk-go"
 )
 
 // Resources defines Databricks resources associated with the bundle.
@@ -15,156 +18,213 @@ type Resources struct {
 	Experiments           map[string]*resources.MlflowExperiment     `json:"experiments,omitempty"`
 	ModelServingEndpoints map[string]*resources.ModelServingEndpoint `json:"model_serving_endpoints,omitempty"`
 	RegisteredModels      map[string]*resources.RegisteredModel      `json:"registered_models,omitempty"`
+	QualityMonitors       map[string]*resources.QualityMonitor       `json:"quality_monitors,omitempty"`
+	Schemas               map[string]*resources.Schema               `json:"schemas,omitempty"`
+	Volumes               map[string]*resources.Volume               `json:"volumes,omitempty"`
+	Clusters              map[string]*resources.Cluster              `json:"clusters,omitempty"`
+	Dashboards            map[string]*resources.Dashboard            `json:"dashboards,omitempty"`
+	Apps                  map[string]*resources.App                  `json:"apps,omitempty"`
 }
 
-type UniqueResourceIdTracker struct {
-	Type       map[string]string
-	ConfigPath map[string]string
+type ConfigResource interface {
+	// Function to assert if the resource exists in the workspace configured in
+	// the input workspace client.
+	Exists(ctx context.Context, w *databricks.WorkspaceClient, id string) (bool, error)
+
+	// Terraform equivalent name of the resource. For example "databricks_job"
+	// for jobs and "databricks_pipeline" for pipelines.
+	TerraformResourceName() string
+
+	// GetName returns the in-product name of the resource.
+	GetName() string
+
+	// GetURL returns the URL of the resource.
+	GetURL() string
+
+	// InitializeURL initializes the URL field of the resource.
+	InitializeURL(baseURL url.URL)
+
+	// IsNil returns true if the resource is nil, for example, when it was removed from the bundle.
+	IsNil() bool
 }
 
-// verifies merging is safe by checking no duplicate identifiers exist
-func (r *Resources) VerifySafeMerge(other *Resources) error {
-	rootTracker, err := r.VerifyUniqueResourceIdentifiers()
-	if err != nil {
-		return err
-	}
-	otherTracker, err := other.VerifyUniqueResourceIdentifiers()
-	if err != nil {
-		return err
-	}
-	for k := range otherTracker.Type {
-		if _, ok := rootTracker.Type[k]; ok {
-			return fmt.Errorf("multiple resources named %s (%s at %s, %s at %s)",
-				k,
-				rootTracker.Type[k],
-				rootTracker.ConfigPath[k],
-				otherTracker.Type[k],
-				otherTracker.ConfigPath[k],
-			)
+// ResourceGroup represents a group of resources of the same type.
+// It includes a description of the resource type and a map of resources.
+type ResourceGroup struct {
+	Description ResourceDescription
+	Resources   map[string]ConfigResource
+}
+
+// collectResourceMap collects resources of a specific type into a ResourceGroup.
+func collectResourceMap[T ConfigResource](
+	description ResourceDescription,
+	input map[string]T,
+) ResourceGroup {
+	resources := make(map[string]ConfigResource)
+	for key, resource := range input {
+		if resource.IsNil() {
+			continue
 		}
+		resources[key] = resource
 	}
-	return nil
+	return ResourceGroup{
+		Description: description,
+		Resources:   resources,
+	}
 }
 
-// This function verifies there are no duplicate names used for the resource definations
-func (r *Resources) VerifyUniqueResourceIdentifiers() (*UniqueResourceIdTracker, error) {
-	tracker := &UniqueResourceIdTracker{
-		Type:       make(map[string]string),
-		ConfigPath: make(map[string]string),
+// AllResources returns all resources in the bundle grouped by their resource type.
+func (r *Resources) AllResources() []ResourceGroup {
+	descriptions := SupportedResources()
+	return []ResourceGroup{
+		collectResourceMap(descriptions["jobs"], r.Jobs),
+		collectResourceMap(descriptions["pipelines"], r.Pipelines),
+		collectResourceMap(descriptions["models"], r.Models),
+		collectResourceMap(descriptions["experiments"], r.Experiments),
+		collectResourceMap(descriptions["model_serving_endpoints"], r.ModelServingEndpoints),
+		collectResourceMap(descriptions["registered_models"], r.RegisteredModels),
+		collectResourceMap(descriptions["quality_monitors"], r.QualityMonitors),
+		collectResourceMap(descriptions["schemas"], r.Schemas),
+		collectResourceMap(descriptions["clusters"], r.Clusters),
+		collectResourceMap(descriptions["dashboards"], r.Dashboards),
+		collectResourceMap(descriptions["volumes"], r.Volumes),
+		collectResourceMap(descriptions["apps"], r.Apps),
 	}
+}
+
+func (r *Resources) FindResourceByConfigKey(key string) (ConfigResource, error) {
+	found := make([]ConfigResource, 0)
 	for k := range r.Jobs {
-		tracker.Type[k] = "job"
-		tracker.ConfigPath[k] = r.Jobs[k].ConfigFilePath
+		if k == key {
+			found = append(found, r.Jobs[k])
+		}
 	}
+
 	for k := range r.Pipelines {
-		if _, ok := tracker.Type[k]; ok {
-			return tracker, fmt.Errorf("multiple resources named %s (%s at %s, %s at %s)",
-				k,
-				tracker.Type[k],
-				tracker.ConfigPath[k],
-				"pipeline",
-				r.Pipelines[k].ConfigFilePath,
-			)
+		if k == key {
+			found = append(found, r.Pipelines[k])
 		}
-		tracker.Type[k] = "pipeline"
-		tracker.ConfigPath[k] = r.Pipelines[k].ConfigFilePath
 	}
-	for k := range r.Models {
-		if _, ok := tracker.Type[k]; ok {
-			return tracker, fmt.Errorf("multiple resources named %s (%s at %s, %s at %s)",
-				k,
-				tracker.Type[k],
-				tracker.ConfigPath[k],
-				"mlflow_model",
-				r.Models[k].ConfigFilePath,
-			)
+
+	for k := range r.Apps {
+		if k == key {
+			found = append(found, r.Apps[k])
 		}
-		tracker.Type[k] = "mlflow_model"
-		tracker.ConfigPath[k] = r.Models[k].ConfigFilePath
 	}
-	for k := range r.Experiments {
-		if _, ok := tracker.Type[k]; ok {
-			return tracker, fmt.Errorf("multiple resources named %s (%s at %s, %s at %s)",
-				k,
-				tracker.Type[k],
-				tracker.ConfigPath[k],
-				"mlflow_experiment",
-				r.Experiments[k].ConfigFilePath,
-			)
+
+	if len(found) == 0 {
+		return nil, fmt.Errorf("no such resource: %s", key)
+	}
+
+	if len(found) > 1 {
+		keys := make([]string, 0, len(found))
+		for _, r := range found {
+			keys = append(keys, fmt.Sprintf("%s:%s", r.TerraformResourceName(), key))
 		}
-		tracker.Type[k] = "mlflow_experiment"
-		tracker.ConfigPath[k] = r.Experiments[k].ConfigFilePath
+		return nil, fmt.Errorf("ambiguous: %s (can resolve to all of %s)", key, keys)
 	}
-	for k := range r.ModelServingEndpoints {
-		if _, ok := tracker.Type[k]; ok {
-			return tracker, fmt.Errorf("multiple resources named %s (%s at %s, %s at %s)",
-				k,
-				tracker.Type[k],
-				tracker.ConfigPath[k],
-				"model_serving_endpoint",
-				r.ModelServingEndpoints[k].ConfigFilePath,
-			)
-		}
-		tracker.Type[k] = "model_serving_endpoint"
-		tracker.ConfigPath[k] = r.ModelServingEndpoints[k].ConfigFilePath
-	}
-	for k := range r.RegisteredModels {
-		if _, ok := tracker.Type[k]; ok {
-			return tracker, fmt.Errorf("multiple resources named %s (%s at %s, %s at %s)",
-				k,
-				tracker.Type[k],
-				tracker.ConfigPath[k],
-				"registered_model",
-				r.RegisteredModels[k].ConfigFilePath,
-			)
-		}
-		tracker.Type[k] = "registered_model"
-		tracker.ConfigPath[k] = r.RegisteredModels[k].ConfigFilePath
-	}
-	return tracker, nil
+
+	return found[0], nil
 }
 
-// SetConfigFilePath sets the specified path for all resources contained in this instance.
-// This property is used to correctly resolve paths relative to the path
-// of the configuration file they were defined in.
-func (r *Resources) SetConfigFilePath(path string) {
-	for _, e := range r.Jobs {
-		e.ConfigFilePath = path
-	}
-	for _, e := range r.Pipelines {
-		e.ConfigFilePath = path
-	}
-	for _, e := range r.Models {
-		e.ConfigFilePath = path
-	}
-	for _, e := range r.Experiments {
-		e.ConfigFilePath = path
-	}
-	for _, e := range r.ModelServingEndpoints {
-		e.ConfigFilePath = path
-	}
-	for _, e := range r.RegisteredModels {
-		e.ConfigFilePath = path
-	}
+type ResourceDescription struct {
+	// Singular and plural name when used to refer to the configuration.
+	SingularName string
+	PluralName   string
+
+	// Singular and plural title when used in summaries / terminal UI.
+	SingularTitle string
+	PluralTitle   string
+
+	TerraformResourceName string
 }
 
-// Merge iterates over all resources and merges chunks of the
-// resource configuration that can be merged. For example, for
-// jobs, this merges job cluster definitions and tasks that
-// use the same `job_cluster_key`, or `task_key`, respectively.
-func (r *Resources) Merge() error {
-	for _, job := range r.Jobs {
-		if err := job.MergeJobClusters(); err != nil {
-			return err
-		}
-		if err := job.MergeTasks(); err != nil {
-			return err
-		}
+// The keys of the map corresponds to the resource key in the bundle configuration.
+func SupportedResources() map[string]ResourceDescription {
+	return map[string]ResourceDescription{
+		"jobs": {
+			SingularName:          "job",
+			PluralName:            "jobs",
+			SingularTitle:         "Job",
+			PluralTitle:           "Jobs",
+			TerraformResourceName: "databricks_job",
+		},
+		"pipelines": {
+			SingularName:          "pipeline",
+			PluralName:            "pipelines",
+			SingularTitle:         "Pipeline",
+			PluralTitle:           "Pipelines",
+			TerraformResourceName: "databricks_pipeline",
+		},
+		"models": {
+			SingularName:          "model",
+			PluralName:            "models",
+			SingularTitle:         "Model",
+			PluralTitle:           "Models",
+			TerraformResourceName: "databricks_mlflow_model",
+		},
+		"experiments": {
+			SingularName:          "experiment",
+			PluralName:            "experiments",
+			SingularTitle:         "Experiment",
+			PluralTitle:           "Experiments",
+			TerraformResourceName: "databricks_mlflow_experiment",
+		},
+		"model_serving_endpoints": {
+			SingularName:          "model_serving_endpoint",
+			PluralName:            "model_serving_endpoints",
+			SingularTitle:         "Model Serving Endpoint",
+			PluralTitle:           "Model Serving Endpoints",
+			TerraformResourceName: "databricks_model_serving_endpoint",
+		},
+		"registered_models": {
+			SingularName:          "registered_model",
+			PluralName:            "registered_models",
+			SingularTitle:         "Registered Model",
+			PluralTitle:           "Registered Models",
+			TerraformResourceName: "databricks_registered_model",
+		},
+		"quality_monitors": {
+			SingularName:          "quality_monitor",
+			PluralName:            "quality_monitors",
+			SingularTitle:         "Quality Monitor",
+			PluralTitle:           "Quality Monitors",
+			TerraformResourceName: "databricks_quality_monitor",
+		},
+		"schemas": {
+			SingularName:          "schema",
+			PluralName:            "schemas",
+			SingularTitle:         "Schema",
+			PluralTitle:           "Schemas",
+			TerraformResourceName: "databricks_schema",
+		},
+		"clusters": {
+			SingularName:          "cluster",
+			PluralName:            "clusters",
+			SingularTitle:         "Cluster",
+			PluralTitle:           "Clusters",
+			TerraformResourceName: "databricks_cluster",
+		},
+		"dashboards": {
+			SingularName:          "dashboard",
+			PluralName:            "dashboards",
+			SingularTitle:         "Dashboard",
+			PluralTitle:           "Dashboards",
+			TerraformResourceName: "databricks_dashboard",
+		},
+		"volumes": {
+			SingularName:          "volume",
+			PluralName:            "volumes",
+			SingularTitle:         "Volume",
+			PluralTitle:           "Volumes",
+			TerraformResourceName: "databricks_volume",
+		},
+		"apps": {
+			SingularName:          "app",
+			PluralName:            "apps",
+			SingularTitle:         "App",
+			PluralTitle:           "Apps",
+			TerraformResourceName: "databricks_app",
+		},
 	}
-	for _, pipeline := range r.Pipelines {
-		if err := pipeline.MergeClusters(); err != nil {
-			return err
-		}
-	}
-	return nil
 }

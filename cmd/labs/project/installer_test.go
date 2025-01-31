@@ -19,17 +19,21 @@ import (
 
 	"github.com/databricks/cli/cmd/labs/github"
 	"github.com/databricks/cli/cmd/labs/project"
-	"github.com/databricks/cli/internal"
+	"github.com/databricks/cli/internal/testcli"
 	"github.com/databricks/cli/libs/env"
+	"github.com/databricks/cli/libs/process"
 	"github.com/databricks/cli/libs/python"
 	"github.com/databricks/databricks-sdk-go/service/compute"
 	"github.com/databricks/databricks-sdk-go/service/iam"
 	"github.com/databricks/databricks-sdk-go/service/sql"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const ownerRWXworldRX = 0o755
-const ownerRW = 0o600
+const (
+	ownerRWXworldRX = 0o755
+	ownerRW         = 0o600
+)
 
 func zipballFromFolder(src string) ([]byte, error) {
 	var buf bytes.Buffer
@@ -105,7 +109,7 @@ func installerContext(t *testing.T, server *httptest.Server) context.Context {
 	ctx = github.WithUserContentOverride(ctx, server.URL)
 	ctx = env.WithUserHomeDir(ctx, t.TempDir())
 	// trick release cache to thing it went to github already
-	cachePath := project.PathInLabs(ctx, "blueprint", "cache")
+	cachePath, _ := project.PathInLabs(ctx, "blueprint", "cache")
 	err := os.MkdirAll(cachePath, ownerRWXworldRX)
 	require.NoError(t, err)
 	bs := []byte(`{"refreshed_at": "2033-01-01T00:00:00.92857+02:00","data": [{"tag_name": "v0.3.15"}]}`)
@@ -116,10 +120,10 @@ func installerContext(t *testing.T, server *httptest.Server) context.Context {
 
 func respondWithJSON(t *testing.T, w http.ResponseWriter, v any) {
 	raw, err := json.Marshal(v)
-	if err != nil {
-		require.NoError(t, err)
-	}
-	w.Write(raw)
+	require.NoError(t, err)
+
+	_, err = w.Write(raw)
+	require.NoError(t, err)
 }
 
 type fileTree struct {
@@ -166,22 +170,20 @@ func TestInstallerWorksForReleases(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/databrickslabs/blueprint/v0.3.15/labs.yml" {
 			raw, err := os.ReadFile("testdata/installed-in-home/.databricks/labs/blueprint/lib/labs.yml")
-			if err != nil {
-				panic(err)
-			}
-			w.Write(raw)
+			assert.NoError(t, err)
+			_, err = w.Write(raw)
+			assert.NoError(t, err)
 			return
 		}
 		if r.URL.Path == "/repos/databrickslabs/blueprint/zipball/v0.3.15" {
 			raw, err := zipballFromFolder("testdata/installed-in-home/.databricks/labs/blueprint/lib")
-			if err != nil {
-				panic(err)
-			}
+			assert.NoError(t, err)
 			w.Header().Add("Content-Type", "application/octet-stream")
-			w.Write(raw)
+			_, err = w.Write(raw)
+			assert.NoError(t, err)
 			return
 		}
-		if r.URL.Path == "/api/2.0/clusters/get" {
+		if r.URL.Path == "/api/2.1/clusters/get" {
 			respondWithJSON(t, w, &compute.ClusterDetails{
 				State: compute.StateRunning,
 			})
@@ -193,6 +195,13 @@ func TestInstallerWorksForReleases(t *testing.T) {
 	defer server.Close()
 
 	ctx := installerContext(t, server)
+
+	ctx, stub := process.WithStub(ctx)
+	stub.WithStdoutFor(`python[\S]+ --version`, "Python 3.10.5")
+	// on Unix, we call `python3`, but on Windows it is `python.exe`
+	stub.WithStderrFor(`python[\S]+ -m venv .*/.databricks/labs/blueprint/state/venv`, "[mock venv create]")
+	stub.WithStderrFor(`python[\S]+ -m pip install --upgrade --upgrade-strategy eager .`, "[mock pip install]")
+	stub.WithStdoutFor(`python[\S]+ install.py`, "setting up important infrastructure")
 
 	// simulate the case of GitHub Actions
 	ctx = env.Set(ctx, "DATABRICKS_HOST", server.URL)
@@ -228,7 +237,7 @@ func TestInstallerWorksForReleases(t *testing.T) {
 	//     │               │   │       └── site-packages
 	//     │               │   │           ├── ...
 	//     │               │   │           ├── distutils-precedence.pth
-	r := internal.NewCobraTestRunnerWithContext(t, ctx, "labs", "install", "blueprint")
+	r := testcli.NewRunner(t, ctx, "labs", "install", "blueprint", "--debug")
 	r.RunAndExpectOutput("setting up important infrastructure")
 }
 
@@ -241,8 +250,9 @@ func TestInstallerWorksForDevelopment(t *testing.T) {
 			Path: filepath.Dir(t.TempDir()),
 		})
 	}()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/2.0/clusters/list" {
+		if r.URL.Path == "/api/2.1/clusters/list" {
 			respondWithJSON(t, w, compute.ListClustersResponse{
 				Clusters: []compute.ClusterDetails{
 					{
@@ -270,7 +280,7 @@ func TestInstallerWorksForDevelopment(t *testing.T) {
 			})
 			return
 		}
-		if r.URL.Path == "/api/2.0/clusters/spark-versions" {
+		if r.URL.Path == "/api/2.1/clusters/spark-versions" {
 			respondWithJSON(t, w, compute.GetSparkVersionsResponse{
 				Versions: []compute.SparkVersion{
 					{
@@ -281,7 +291,7 @@ func TestInstallerWorksForDevelopment(t *testing.T) {
 			})
 			return
 		}
-		if r.URL.Path == "/api/2.0/clusters/get" {
+		if r.URL.Path == "/api/2.1/clusters/get" {
 			respondWithJSON(t, w, &compute.ClusterDetails{
 				State: compute.StateRunning,
 			})
@@ -305,7 +315,10 @@ func TestInstallerWorksForDevelopment(t *testing.T) {
 	defer server.Close()
 
 	wd, _ := os.Getwd()
-	defer os.Chdir(wd)
+	defer func() {
+		err := os.Chdir(wd)
+		require.NoError(t, err)
+	}()
 
 	devDir := copyTestdata(t, "testdata/installed-in-home/.databricks/labs/blueprint/lib")
 	err := os.Chdir(devDir)
@@ -317,8 +330,8 @@ func TestInstallerWorksForDevelopment(t *testing.T) {
 
 	// development installer assumes it's in the active virtualenv
 	ctx = env.Set(ctx, "PYTHON_BIN", py)
-
-	err = os.WriteFile(filepath.Join(env.UserHomeDir(ctx), ".databrickscfg"), []byte(fmt.Sprintf(`
+	home, _ := env.UserHomeDir(ctx)
+	err = os.WriteFile(filepath.Join(home, ".databrickscfg"), []byte(fmt.Sprintf(`
 [profile-one]
 host = %s
 token = ...
@@ -344,7 +357,7 @@ account_id = abc
 	// 					└── databrickslabs-blueprint-releases.json
 
 	// `databricks labs install .` means "verify this installer i'm developing does work"
-	r := internal.NewCobraTestRunnerWithContext(t, ctx, "labs", "install", ".")
+	r := testcli.NewRunner(t, ctx, "labs", "install", ".")
 	r.WithStdin()
 	defer r.CloseStdin()
 
@@ -364,22 +377,20 @@ func TestUpgraderWorksForReleases(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/databrickslabs/blueprint/v0.4.0/labs.yml" {
 			raw, err := os.ReadFile("testdata/installed-in-home/.databricks/labs/blueprint/lib/labs.yml")
-			if err != nil {
-				panic(err)
-			}
-			w.Write(raw)
+			assert.NoError(t, err)
+			_, err = w.Write(raw)
+			assert.NoError(t, err)
 			return
 		}
 		if r.URL.Path == "/repos/databrickslabs/blueprint/zipball/v0.4.0" {
 			raw, err := zipballFromFolder("testdata/installed-in-home/.databricks/labs/blueprint/lib")
-			if err != nil {
-				panic(err)
-			}
+			assert.NoError(t, err)
 			w.Header().Add("Content-Type", "application/octet-stream")
-			w.Write(raw)
+			_, err = w.Write(raw)
+			assert.NoError(t, err)
 			return
 		}
-		if r.URL.Path == "/api/2.0/clusters/get" {
+		if r.URL.Path == "/api/2.1/clusters/get" {
 			respondWithJSON(t, w, &compute.ClusterDetails{
 				State: compute.StateRunning,
 			})
@@ -395,11 +406,17 @@ func TestUpgraderWorksForReleases(t *testing.T) {
 	newHome := copyTestdata(t, "testdata/installed-in-home")
 	ctx = env.WithUserHomeDir(ctx, newHome)
 
+	// Install stubs for the python calls we need to ensure were run in the
+	// upgrade process.
+	ctx, stub := process.WithStub(ctx)
+	stub.WithStderrFor(`python[\S]+ -m pip install --upgrade --upgrade-strategy eager .`, "[mock pip install]")
+	stub.WithStdoutFor(`python[\S]+ install.py`, "setting up important infrastructure")
+
 	py, _ := python.DetectExecutable(ctx)
 	py, _ = filepath.Abs(py)
 	ctx = env.Set(ctx, "PYTHON_BIN", py)
 
-	cachePath := project.PathInLabs(ctx, "blueprint", "cache")
+	cachePath, _ := project.PathInLabs(ctx, "blueprint", "cache")
 	bs := []byte(`{"refreshed_at": "2033-01-01T00:00:00.92857+02:00","data": [{"tag_name": "v0.4.0"}]}`)
 	err := os.WriteFile(filepath.Join(cachePath, "databrickslabs-blueprint-releases.json"), bs, ownerRW)
 	require.NoError(t, err)
@@ -410,6 +427,19 @@ func TestUpgraderWorksForReleases(t *testing.T) {
 	ctx = env.Set(ctx, "DATABRICKS_CLUSTER_ID", "installer-cluster")
 	ctx = env.Set(ctx, "DATABRICKS_WAREHOUSE_ID", "installer-warehouse")
 
-	r := internal.NewCobraTestRunnerWithContext(t, ctx, "labs", "upgrade", "blueprint")
+	r := testcli.NewRunner(t, ctx, "labs", "upgrade", "blueprint")
 	r.RunAndExpectOutput("setting up important infrastructure")
+
+	// Check if the stub was called with the 'python -m pip install' command
+	pi := false
+	for _, call := range stub.Commands() {
+		if strings.HasSuffix(call, "-m pip install --upgrade --upgrade-strategy eager .") {
+			pi = true
+			break
+		}
+	}
+	if !pi {
+		t.Logf(`Expected stub command 'python[\S]+ -m pip install --upgrade --upgrade-strategy eager .' not found`)
+		t.FailNow()
+	}
 }

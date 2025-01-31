@@ -31,6 +31,9 @@ func New() *cobra.Command {
 		Hidden: true,
 	}
 
+	// Add methods
+	cmd.AddCommand(newExchangeToken())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -61,8 +64,8 @@ func newExchangeToken() *cobra.Command {
 	cmd.Short = `Exchange token.`
 	cmd.Long = `Exchange token.
   
-  Exchange tokens with an Identity Provider to get a new access token. It
-  allowes specifying scopes to determine token permissions.`
+  Exchange tokens with an Identity Provider to get a new access token. It allows
+  specifying scopes to determine token permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -72,9 +75,15 @@ func newExchangeToken() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = exchangeTokenJson.Unmarshal(&exchangeTokenReq)
-			if err != nil {
-				return err
+			diags := exchangeTokenJson.Unmarshal(&exchangeTokenReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
@@ -97,12 +106,6 @@ func newExchangeToken() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newExchangeToken())
-	})
 }
 
 // end service CredentialsManager

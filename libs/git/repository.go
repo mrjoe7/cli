@@ -2,12 +2,12 @@ package git
 
 import (
 	"fmt"
-	"os"
+	"net/url"
 	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/databricks/cli/folders"
+	"github.com/databricks/cli/libs/vfs"
 )
 
 const gitIgnoreFileName = ".gitignore"
@@ -17,12 +17,21 @@ var GitDirectoryName = ".git"
 // Repository represents a Git repository or a directory
 // that could later be initialized as Git repository.
 type Repository struct {
-	// real indicates if this is a real repository or a non-Git
-	// directory where we process .gitignore files.
-	real bool
+	// rootDir is the path to the root of the repository checkout.
+	// This can be either the main repository checkout or a worktree checkout.
+	// For more information about worktrees, see: https://git-scm.com/docs/git-worktree#_description.
+	rootDir vfs.Path
 
-	// rootPath is the absolute path to the repository root.
-	rootPath string
+	// gitDir is the equivalent of $GIT_DIR and points to the
+	// `.git` directory of a repository or a worktree directory.
+	// See https://git-scm.com/docs/git-worktree#_details for more information.
+	gitDir vfs.Path
+
+	// gitCommonDir is the equivalent of $GIT_COMMON_DIR and points to the
+	// `.git` directory of the main working tree (common between worktrees).
+	// This is equivalent to [gitDir] if this is the main working tree.
+	// See https://git-scm.com/docs/git-worktree#_details for more information.
+	gitCommonDir vfs.Path
 
 	// ignore contains a list of ignore patterns indexed by the
 	// path prefix relative to the repository root.
@@ -42,12 +51,11 @@ type Repository struct {
 
 // Root returns the absolute path to the repository root.
 func (r *Repository) Root() string {
-	return r.rootPath
+	return r.rootDir.Native()
 }
 
 func (r *Repository) CurrentBranch() (string, error) {
-	// load .git/HEAD
-	ref, err := LoadReferenceFile(filepath.Join(r.rootPath, GitDirectoryName, "HEAD"))
+	ref, err := LoadReferenceFile(r.gitDir, "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -63,8 +71,7 @@ func (r *Repository) CurrentBranch() (string, error) {
 }
 
 func (r *Repository) LatestCommit() (string, error) {
-	// load .git/HEAD
-	ref, err := LoadReferenceFile(filepath.Join(r.rootPath, GitDirectoryName, "HEAD"))
+	ref, err := LoadReferenceFile(r.gitDir, "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -78,12 +85,12 @@ func (r *Repository) LatestCommit() (string, error) {
 		return ref.Content, nil
 	}
 
-	// read reference from .git/HEAD
+	// Read reference from $GIT_DIR/HEAD
 	branchHeadPath, err := ref.ResolvePath()
 	if err != nil {
 		return "", err
 	}
-	branchHeadRef, err := LoadReferenceFile(filepath.Join(r.rootPath, GitDirectoryName, branchHeadPath))
+	branchHeadRef, err := LoadReferenceFile(r.gitCommonDir, branchHeadPath)
 	if err != nil {
 		return "", err
 	}
@@ -99,7 +106,22 @@ func (r *Repository) LatestCommit() (string, error) {
 
 // return origin url if it's defined, otherwise an empty string
 func (r *Repository) OriginUrl() string {
-	return r.config.variables["remote.origin.url"]
+	rawUrl := r.config.variables["remote.origin.url"]
+
+	// Remove username and password from the URL.
+	parsedUrl, err := url.Parse(rawUrl)
+	if err != nil {
+		// Git supports https URLs and non standard URLs like "ssh://" or "file://".
+		// Parsing these URLs is not supported by the Go standard library. In case
+		// of an error, we return the raw URL. This is okay because for ssh URLs
+		// because passwords cannot be included in the URL.
+		return rawUrl
+	}
+	// Setting User to nil removes the username and password from the URL when
+	// .String() is called.
+	// See: https://pkg.go.dev/net/url#URL.String
+	parsedUrl.User = nil
+	return parsedUrl.String()
 }
 
 // loadConfig loads and combines user specific and repository specific configuration files.
@@ -108,18 +130,12 @@ func (r *Repository) loadConfig() error {
 	if err != nil {
 		return fmt.Errorf("unable to load user specific gitconfig: %w", err)
 	}
-	err = config.loadFile(filepath.Join(r.rootPath, ".git/config"))
+	err = config.loadFile(r.gitCommonDir, "config")
 	if err != nil {
 		return fmt.Errorf("unable to load repository specific gitconfig: %w", err)
 	}
 	r.config = config
 	return nil
-}
-
-// newIgnoreFile constructs a new [ignoreRules] implementation backed by
-// a file using the specified path relative to the repository root.
-func (r *Repository) newIgnoreFile(relativeIgnoreFilePath string) ignoreRules {
-	return newIgnoreFile(filepath.Join(r.rootPath, relativeIgnoreFilePath))
 }
 
 // getIgnoreRules returns a slice of [ignoreRules] that apply
@@ -132,7 +148,7 @@ func (r *Repository) getIgnoreRules(prefix string) []ignoreRules {
 		return fs
 	}
 
-	r.ignore[prefix] = append(r.ignore[prefix], r.newIgnoreFile(filepath.Join(prefix, gitIgnoreFileName)))
+	r.ignore[prefix] = append(r.ignore[prefix], newIgnoreFile(r.rootDir, path.Join(prefix, gitIgnoreFileName)))
 	return r.ignore[prefix]
 }
 
@@ -149,7 +165,7 @@ func (r *Repository) taintIgnoreRules() {
 // Ignore computes whether to ignore the specified path.
 // The specified path is relative to the repository root path.
 func (r *Repository) Ignore(relPath string) (bool, error) {
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	parts := strings.Split(relPath, "/")
 
 	// Retain trailing slash for directory patterns.
 	// We know a trailing slash was present if the last element
@@ -186,28 +202,19 @@ func (r *Repository) Ignore(relPath string) (bool, error) {
 	return false, nil
 }
 
-func NewRepository(path string) (*Repository, error) {
-	path, err := filepath.Abs(path)
+func NewRepository(rootDir vfs.Path) (*Repository, error) {
+	// Derive $GIT_DIR and $GIT_COMMON_DIR paths if this is a real repository.
+	// If it isn't a real repository, they'll point to the (non-existent) `.git` directory.
+	gitDir, gitCommonDir, err := resolveGitDirs(rootDir)
 	if err != nil {
 		return nil, err
 	}
 
-	real := true
-	rootPath, err := folders.FindDirWithLeaf(path, GitDirectoryName)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-		// Cannot find `.git` directory.
-		// Treat the specified path as a potential repository root.
-		real = false
-		rootPath = path
-	}
-
 	repo := &Repository{
-		real:     real,
-		rootPath: rootPath,
-		ignore:   make(map[string][]ignoreRules),
+		rootDir:      rootDir,
+		gitDir:       gitDir,
+		gitCommonDir: gitCommonDir,
+		ignore:       make(map[string][]ignoreRules),
 	}
 
 	err = repo.loadConfig()
@@ -221,21 +228,29 @@ func NewRepository(path string) (*Repository, error) {
 		return nil, fmt.Errorf("unable to access core excludes file: %w", err)
 	}
 
+	// Load global excludes on this machine.
+	// This is by definition a local path so we create a new [vfs.Path] instance.
+	coreExcludes := newStringIgnoreRules([]string{})
+	if coreExcludesPath != "" {
+		dir := filepath.Dir(coreExcludesPath)
+		base := filepath.Base(coreExcludesPath)
+		coreExcludes = newIgnoreFile(vfs.MustNew(dir), base)
+	}
+
 	// Initialize root ignore rules.
 	// These are special and not lazily initialized because:
 	// 1) we include a hardcoded ignore pattern
 	// 2) we include a gitignore file at a non-standard path
 	repo.ignore["."] = []ignoreRules{
-		// Load global excludes on this machine.
-		newIgnoreFile(coreExcludesPath),
+		coreExcludes,
 		// Always ignore root .git directory.
 		newStringIgnoreRules([]string{
 			".git",
 		}),
-		// Load repository-wide excludes file.
-		repo.newIgnoreFile(".git/info/excludes"),
+		// Load repository-wide exclude file.
+		newIgnoreFile(repo.gitCommonDir, "info/exclude"),
 		// Load root gitignore file.
-		repo.newIgnoreFile(".gitignore"),
+		newIgnoreFile(repo.rootDir, ".gitignore"),
 	}
 
 	return repo, nil

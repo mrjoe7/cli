@@ -36,6 +36,17 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newGetPermissions())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newSetPermissions())
+	cmd.AddCommand(newUpdate())
+	cmd.AddCommand(newUpdatePermissions())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -50,13 +61,13 @@ func New() *cobra.Command {
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var createOverrides []func(
 	*cobra.Command,
-	*workspace.CreateRepo,
+	*workspace.CreateRepoRequest,
 )
 
 func newCreate() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var createReq workspace.CreateRepo
+	var createReq workspace.CreateRepoRequest
 	var createJson flags.JsonFlag
 
 	// TODO: short flags
@@ -71,19 +82,26 @@ func newCreate() *cobra.Command {
   
   Creates a repo in the workspace and links it to the remote Git repo specified.
   Note that repos created programmatically must be linked to a remote Git repo,
-  unlike repos created in the browser.`
+  unlike repos created in the browser.
+
+  Arguments:
+    URL: URL of the Git repository to be linked.
+    PROVIDER: Git provider. This field is case-insensitive. The available Git providers
+      are gitHub, bitbucketCloud, gitLab, azureDevOpsServices,
+      gitHubEnterprise, bitbucketServer, gitLabEnterpriseEdition and
+      awsCodeCommit.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'url', 'provider' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -93,9 +111,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -124,12 +148,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -150,7 +168,10 @@ func newDelete() *cobra.Command {
 	cmd.Short = `Delete a repo.`
 	cmd.Long = `Delete a repo.
   
-  Deletes the specified repo.`
+  Deletes the specified repo.
+
+  Arguments:
+    REPO_ID: The ID for the corresponding repo to delete.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -167,14 +188,14 @@ func newDelete() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load names for Repos drop-down. Please manually specify required arguments. Original error: %w", err)
 			}
-			id, err := cmdio.Select(ctx, names, "The ID for the corresponding repo to access")
+			id, err := cmdio.Select(ctx, names, "The ID for the corresponding repo to delete")
 			if err != nil {
 				return err
 			}
 			args = append(args, id)
 		}
 		if len(args) != 1 {
-			return fmt.Errorf("expected to have the id for the corresponding repo to access")
+			return fmt.Errorf("expected to have the id for the corresponding repo to delete")
 		}
 		_, err = fmt.Sscan(args[0], &deleteReq.RepoId)
 		if err != nil {
@@ -200,12 +221,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -226,7 +241,10 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get a repo.`
 	cmd.Long = `Get a repo.
   
-  Returns the repo with the given repo ID.`
+  Returns the repo with the given repo ID.
+
+  Arguments:
+    REPO_ID: ID of the Git folder (repo) object in the workspace.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -243,14 +261,14 @@ func newGet() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load names for Repos drop-down. Please manually specify required arguments. Original error: %w", err)
 			}
-			id, err := cmdio.Select(ctx, names, "The ID for the corresponding repo to access")
+			id, err := cmdio.Select(ctx, names, "ID of the Git folder (repo) object in the workspace")
 			if err != nil {
 				return err
 			}
 			args = append(args, id)
 		}
 		if len(args) != 1 {
-			return fmt.Errorf("expected to have the id for the corresponding repo to access")
+			return fmt.Errorf("expected to have id of the git folder (repo) object in the workspace")
 		}
 		_, err = fmt.Sscan(args[0], &getReq.RepoId)
 		if err != nil {
@@ -276,12 +294,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start get-permission-levels command
 
 // Slice with functions to override default command behavior.
@@ -302,7 +314,10 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get repo permission levels.`
 	cmd.Long = `Get repo permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    REPO_ID: The repo for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -349,12 +364,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start get-permissions command
 
 // Slice with functions to override default command behavior.
@@ -376,7 +385,10 @@ func newGetPermissions() *cobra.Command {
 	cmd.Long = `Get repo permissions.
   
   Gets the permissions of a repo. Repos can inherit permissions from their root
-  object.`
+  object.
+
+  Arguments:
+    REPO_ID: The repo for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -423,12 +435,6 @@ func newGetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissions())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -452,13 +458,13 @@ func newList() *cobra.Command {
 	cmd.Short = `Get repos.`
 	cmd.Long = `Get repos.
   
-  Returns repos that the calling user has Manage permissions on. Results are
-  paginated with each page containing twenty repos.`
+  Returns repos that the calling user has Manage permissions on. Use
+  next_page_token to iterate through additional pages.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -467,11 +473,8 @@ func newList() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.Repos.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Repos.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -484,12 +487,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start set-permissions command
@@ -516,8 +513,12 @@ func newSetPermissions() *cobra.Command {
 	cmd.Short = `Set repo permissions.`
 	cmd.Long = `Set repo permissions.
   
-  Sets permissions on a repo. Repos can inherit permissions from their root
-  object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their root object.
+
+  Arguments:
+    REPO_ID: The repo for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -527,9 +528,15 @@ func newSetPermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setPermissionsJson.Unmarshal(&setPermissionsReq)
-			if err != nil {
-				return err
+			diags := setPermissionsJson.Unmarshal(&setPermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -570,25 +577,19 @@ func newSetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetPermissions())
-	})
-}
-
 // start update command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var updateOverrides []func(
 	*cobra.Command,
-	*workspace.UpdateRepo,
+	*workspace.UpdateRepoRequest,
 )
 
 func newUpdate() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var updateReq workspace.UpdateRepo
+	var updateReq workspace.UpdateRepoRequest
 	var updateJson flags.JsonFlag
 
 	// TODO: short flags
@@ -603,7 +604,10 @@ func newUpdate() *cobra.Command {
 	cmd.Long = `Update a repo.
   
   Updates the repo to a different branch or tag, or updates the repo to the
-  latest commit on the same branch.`
+  latest commit on the same branch.
+
+  Arguments:
+    REPO_ID: ID of the Git folder (repo) object in the workspace.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -613,9 +617,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -626,14 +636,14 @@ func newUpdate() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load names for Repos drop-down. Please manually specify required arguments. Original error: %w", err)
 			}
-			id, err := cmdio.Select(ctx, names, "The ID for the corresponding repo to access")
+			id, err := cmdio.Select(ctx, names, "ID of the Git folder (repo) object in the workspace")
 			if err != nil {
 				return err
 			}
 			args = append(args, id)
 		}
 		if len(args) != 1 {
-			return fmt.Errorf("expected to have the id for the corresponding repo to access")
+			return fmt.Errorf("expected to have id of the git folder (repo) object in the workspace")
 		}
 		_, err = fmt.Sscan(args[0], &updateReq.RepoId)
 		if err != nil {
@@ -657,12 +667,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // start update-permissions command
@@ -690,7 +694,10 @@ func newUpdatePermissions() *cobra.Command {
 	cmd.Long = `Update repo permissions.
   
   Updates the permissions on a repo. Repos can inherit permissions from their
-  root object.`
+  root object.
+
+  Arguments:
+    REPO_ID: The repo for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -700,9 +707,15 @@ func newUpdatePermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updatePermissionsJson.Unmarshal(&updatePermissionsReq)
-			if err != nil {
-				return err
+			diags := updatePermissionsJson.Unmarshal(&updatePermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -741,12 +754,6 @@ func newUpdatePermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdatePermissions())
-	})
 }
 
 // end service Repos

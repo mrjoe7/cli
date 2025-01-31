@@ -28,6 +28,11 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newList())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -69,7 +74,7 @@ func newCreate() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -79,9 +84,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -102,12 +113,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -135,9 +140,23 @@ func newDelete() *cobra.Command {
   Revokes an access token.
   
   If a token with the specified ID is not valid, this call returns an error
-  **RESOURCE_DOES_NOT_EXIST**.`
+  **RESOURCE_DOES_NOT_EXIST**.
+
+  Arguments:
+    TOKEN_ID: The ID of the token to be revoked.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(0)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'token_id' in your JSON input")
+			}
+			return nil
+		}
+		return nil
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -145,15 +164,21 @@ func newDelete() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteJson.Unmarshal(&deleteReq)
-			if err != nil {
-				return err
+			diags := deleteJson.Unmarshal(&deleteReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			if len(args) == 0 {
 				promptSpinner := cmdio.Spinner(ctx)
 				promptSpinner <- "No TOKEN_ID argument specified. Loading names for Tokens drop-down."
-				names, err := w.Tokens.TokenInfoCommentToTokenIdMap(ctx)
+				names, err := w.Tokens.PublicTokenInfoCommentToTokenIdMap(ctx)
 				close(promptSpinner)
 				if err != nil {
 					return fmt.Errorf("failed to load names for Tokens drop-down. Please manually specify required arguments. Original error: %w", err)
@@ -189,12 +214,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -218,11 +237,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.Tokens.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Tokens.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -235,12 +251,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service Tokens

@@ -1,58 +1,28 @@
 package apps
 
 import (
-	"fmt"
-
-	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
-	"github.com/databricks/cli/libs/flags"
-	"github.com/databricks/databricks-sdk-go/service/serving"
+	"github.com/databricks/databricks-sdk-go/service/apps"
 	"github.com/spf13/cobra"
 )
 
-func createOverride(cmd *cobra.Command, deployReq *serving.DeployAppRequest) {
-	var manifestYaml flags.YamlFlag
-	var resourcesYaml flags.YamlFlag
-	createJson := cmd.Flag("json").Value.(*flags.JsonFlag)
+func listOverride(listCmd *cobra.Command, listReq *apps.ListAppsRequest) {
+	listCmd.Annotations["headerTemplate"] = cmdio.Heredoc(`
+	{{header "Name"}}	{{header "Url"}}	{{header "ComputeStatus"}}	{{header "DeploymentStatus"}}`)
+	listCmd.Annotations["template"] = cmdio.Heredoc(`
+	{{range .}}{{.Name | green}}	{{.Url}}	{{if .ComputeStatus}}{{if eq .ComputeStatus.State "ACTIVE"}}{{green "%s" .ComputeStatus.State }}{{else}}{{blue "%s" .ComputeStatus.State}}{{end}}{{end}}	{{if .ActiveDeployment}}{{if eq .ActiveDeployment.Status.State "SUCCEEDED"}}{{green "%s" .ActiveDeployment.Status.State }}{{else}}{{blue "%s" .ActiveDeployment.Status.State}}{{end}}{{end}}
+	{{end}}`)
+}
 
-	// TODO: short flags
-	cmd.Flags().Var(&manifestYaml, "manifest", `either inline YAML string or @path/to/manifest.yaml`)
-	cmd.Flags().Var(&resourcesYaml, "resources", `either inline YAML string or @path/to/resources.yaml`)
-
-	cmd.Annotations = make(map[string]string)
-
-	cmd.PreRunE = root.MustWorkspaceClient
-	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
-		ctx := cmd.Context()
-		w := root.WorkspaceClient(ctx)
-		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&deployReq)
-			if err != nil {
-				return err
-			}
-		} else if cmd.Flags().Changed("manifest") {
-			err = manifestYaml.Unmarshal(&deployReq.Manifest)
-			if err != nil {
-				return err
-			}
-			if cmd.Flags().Changed("resources") {
-				err = resourcesYaml.Unmarshal(&deployReq.Resources)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-			return fmt.Errorf("please provide command input in YAML format by specifying the --manifest flag or provide a json payload using the --json flag")
-		}
-		response, err := w.Apps.Create(ctx, *deployReq)
-		if err != nil {
-			return err
-		}
-
-		return cmdio.Render(ctx, response)
-	}
+func listDeploymentsOverride(listDeploymentsCmd *cobra.Command, listDeploymentsReq *apps.ListAppDeploymentsRequest) {
+	listDeploymentsCmd.Annotations["headerTemplate"] = cmdio.Heredoc(`
+	{{header "DeploymentId"}}	{{header "State"}}	{{header "CreatedAt"}}`)
+	listDeploymentsCmd.Annotations["template"] = cmdio.Heredoc(`
+	{{range .}}{{.DeploymentId}}	{{if eq .Status.State "SUCCEEDED"}}{{green "%s" .Status.State }}{{else}}{{blue "%s" .Status.State}}{{end}}	{{.CreateTime}}
+	{{end}}`)
 }
 
 func init() {
-	createOverrides = append(createOverrides, createOverride)
+	listOverrides = append(listOverrides, listOverride)
+	listDeploymentsOverrides = append(listDeploymentsOverrides, listDeploymentsOverride)
 }

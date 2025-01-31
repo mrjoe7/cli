@@ -47,6 +47,14 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newReplace())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -73,7 +81,9 @@ func newCreate() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&createJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Use = "create"
+	// TODO: array: ip_addresses
+
+	cmd.Use = "create LABEL LIST_TYPE"
 	cmd.Short = `Create access list.`
 	cmd.Long = `Create access list.
   
@@ -92,9 +102,30 @@ func newCreate() *cobra.Command {
   
   It can take a few minutes for the changes to take effect. **Note**: Your new
   IP access list has no effect until you enable the feature. See
-  :method:workspaceconf/setStatus`
+  :method:workspaceconf/setStatus
+
+  Arguments:
+    LABEL: Label for the IP access list. This **cannot** be empty.
+    LIST_TYPE: Type of IP access list. Valid values are as follows and are
+      case-sensitive:
+      
+      * ALLOW: An allow list. Include this IP or range. * BLOCK: A block
+      list. Exclude this IP or range. IP addresses in the block list are
+      excluded even if they are included in an allow list.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(0)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'label', 'list_type' in your JSON input")
+			}
+			return nil
+		}
+		check := root.ExactArgs(2)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -102,12 +133,25 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if !cmd.Flags().Changed("json") {
+			createReq.Label = args[0]
+		}
+		if !cmd.Flags().Changed("json") {
+			_, err = fmt.Sscan(args[1], &createReq.ListType)
+			if err != nil {
+				return fmt.Errorf("invalid LIST_TYPE: %s", args[1])
+			}
 		}
 
 		response, err := w.IpAccessLists.Create(ctx, createReq)
@@ -127,12 +171,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -155,7 +193,10 @@ func newDelete() *cobra.Command {
 	cmd.Short = `Delete access list.`
 	cmd.Long = `Delete access list.
   
-  Deletes an IP access list, specified by its list ID.`
+  Deletes an IP access list, specified by its list ID.
+
+  Arguments:
+    IP_ACCESS_LIST_ID: The ID for the corresponding IP access list`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -172,14 +213,14 @@ func newDelete() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load names for Ip Access Lists drop-down. Please manually specify required arguments. Original error: %w", err)
 			}
-			id, err := cmdio.Select(ctx, names, "The ID for the corresponding IP access list to modify")
+			id, err := cmdio.Select(ctx, names, "The ID for the corresponding IP access list")
 			if err != nil {
 				return err
 			}
 			args = append(args, id)
 		}
 		if len(args) != 1 {
-			return fmt.Errorf("expected to have the id for the corresponding ip access list to modify")
+			return fmt.Errorf("expected to have the id for the corresponding ip access list")
 		}
 		deleteReq.IpAccessListId = args[0]
 
@@ -202,12 +243,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -228,7 +263,10 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get access list.`
 	cmd.Long = `Get access list.
   
-  Gets an IP access list, specified by its list ID.`
+  Gets an IP access list, specified by its list ID.
+
+  Arguments:
+    IP_ACCESS_LIST_ID: The ID for the corresponding IP access list`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -245,14 +283,14 @@ func newGet() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load names for Ip Access Lists drop-down. Please manually specify required arguments. Original error: %w", err)
 			}
-			id, err := cmdio.Select(ctx, names, "The ID for the corresponding IP access list to modify")
+			id, err := cmdio.Select(ctx, names, "The ID for the corresponding IP access list")
 			if err != nil {
 				return err
 			}
 			args = append(args, id)
 		}
 		if len(args) != 1 {
-			return fmt.Errorf("expected to have the id for the corresponding ip access list to modify")
+			return fmt.Errorf("expected to have the id for the corresponding ip access list")
 		}
 		getReq.IpAccessListId = args[0]
 
@@ -273,12 +311,6 @@ func newGet() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
 }
 
 // start list command
@@ -304,11 +336,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.IpAccessLists.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.IpAccessLists.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -321,12 +350,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start replace command
@@ -347,9 +370,9 @@ func newReplace() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&replaceJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Flags().StringVar(&replaceReq.ListId, "list-id", replaceReq.ListId, `Universally unique identifier (UUID) of the IP access list.`)
+	// TODO: array: ip_addresses
 
-	cmd.Use = "replace"
+	cmd.Use = "replace IP_ACCESS_LIST_ID LABEL LIST_TYPE ENABLED"
 	cmd.Short = `Replace access list.`
 	cmd.Long = `Replace access list.
   
@@ -364,9 +387,32 @@ func newReplace() *cobra.Command {
   calling user's current IP, error 400 is returned with error_code value
   INVALID_STATE. It can take a few minutes for the changes to take effect.
   Note that your resulting IP access list has no effect until you enable the
-  feature. See :method:workspaceconf/setStatus.`
+  feature. See :method:workspaceconf/setStatus.
+
+  Arguments:
+    IP_ACCESS_LIST_ID: The ID for the corresponding IP access list
+    LABEL: Label for the IP access list. This **cannot** be empty.
+    LIST_TYPE: Type of IP access list. Valid values are as follows and are
+      case-sensitive:
+      
+      * ALLOW: An allow list. Include this IP or range. * BLOCK: A block
+      list. Exclude this IP or range. IP addresses in the block list are
+      excluded even if they are included in an allow list.
+    ENABLED: Specifies whether this IP access list is enabled.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(1)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, provide only IP_ACCESS_LIST_ID as positional arguments. Provide 'label', 'list_type', 'enabled' in your JSON input")
+			}
+			return nil
+		}
+		check := root.ExactArgs(4)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -374,12 +420,32 @@ func newReplace() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = replaceJson.Unmarshal(&replaceReq)
-			if err != nil {
-				return err
+			diags := replaceJson.Unmarshal(&replaceReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		replaceReq.IpAccessListId = args[0]
+		if !cmd.Flags().Changed("json") {
+			replaceReq.Label = args[1]
+		}
+		if !cmd.Flags().Changed("json") {
+			_, err = fmt.Sscan(args[2], &replaceReq.ListType)
+			if err != nil {
+				return fmt.Errorf("invalid LIST_TYPE: %s", args[2])
+			}
+		}
+		if !cmd.Flags().Changed("json") {
+			_, err = fmt.Sscan(args[3], &replaceReq.Enabled)
+			if err != nil {
+				return fmt.Errorf("invalid ENABLED: %s", args[3])
+			}
 		}
 
 		err = w.IpAccessLists.Replace(ctx, replaceReq)
@@ -401,12 +467,6 @@ func newReplace() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newReplace())
-	})
-}
-
 // start update command
 
 // Slice with functions to override default command behavior.
@@ -425,9 +485,12 @@ func newUpdate() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Flags().StringVar(&updateReq.ListId, "list-id", updateReq.ListId, `Universally unique identifier (UUID) of the IP access list.`)
+	cmd.Flags().BoolVar(&updateReq.Enabled, "enabled", updateReq.Enabled, `Specifies whether this IP access list is enabled.`)
+	// TODO: array: ip_addresses
+	cmd.Flags().StringVar(&updateReq.Label, "label", updateReq.Label, `Label for the IP access list.`)
+	cmd.Flags().Var(&updateReq.ListType, "list-type", `Type of IP access list. Supported values: [ALLOW, BLOCK]`)
 
-	cmd.Use = "update"
+	cmd.Use = "update IP_ACCESS_LIST_ID"
 	cmd.Short = `Update access list.`
 	cmd.Long = `Update access list.
   
@@ -446,7 +509,10 @@ func newUpdate() *cobra.Command {
   
   It can take a few minutes for the changes to take effect. Note that your
   resulting IP access list has no effect until you enable the feature. See
-  :method:workspaceconf/setStatus.`
+  :method:workspaceconf/setStatus.
+
+  Arguments:
+    IP_ACCESS_LIST_ID: The ID for the corresponding IP access list`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -456,13 +522,35 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if len(args) == 0 {
+			promptSpinner := cmdio.Spinner(ctx)
+			promptSpinner <- "No IP_ACCESS_LIST_ID argument specified. Loading names for Ip Access Lists drop-down."
+			names, err := w.IpAccessLists.IpAccessListInfoLabelToListIdMap(ctx)
+			close(promptSpinner)
+			if err != nil {
+				return fmt.Errorf("failed to load names for Ip Access Lists drop-down. Please manually specify required arguments. Original error: %w", err)
+			}
+			id, err := cmdio.Select(ctx, names, "The ID for the corresponding IP access list")
 			if err != nil {
 				return err
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			args = append(args, id)
 		}
+		if len(args) != 1 {
+			return fmt.Errorf("expected to have the id for the corresponding ip access list")
+		}
+		updateReq.IpAccessListId = args[0]
 
 		err = w.IpAccessLists.Update(ctx, updateReq)
 		if err != nil {
@@ -481,12 +569,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service IpAccessLists

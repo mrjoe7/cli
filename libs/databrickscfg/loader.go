@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"strings"
 
 	"github.com/databricks/cli/libs/log"
@@ -19,7 +19,7 @@ var errNoMatchingProfiles = errors.New("no matching config profiles found")
 type errMultipleProfiles []string
 
 func (e errMultipleProfiles) Error() string {
-	return fmt.Sprintf("multiple profiles matched: %s", strings.Join(e, ", "))
+	return "multiple profiles matched: " + strings.Join(e, ", ")
 }
 
 func findMatchingProfile(configFile *config.File, matcher func(*ini.Section) bool) (*ini.Section, error) {
@@ -68,7 +68,7 @@ func (l profileFromHostLoader) Configure(cfg *config.Config) error {
 	ctx := context.Background()
 	configFile, err := config.LoadFile(cfg.ConfigFile)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("cannot parse config file: %w", err)
@@ -98,7 +98,10 @@ func (l profileFromHostLoader) Configure(cfg *config.Config) error {
 	}
 
 	log.Debugf(ctx, "Loading profile %s because of host match", match.Name())
-	err = config.ConfigAttributes.ResolveFromStringMap(cfg, match.KeysHash())
+	err = config.ConfigAttributes.ResolveFromStringMapWithSource(cfg, match.KeysHash(), config.Source{
+		Type: config.SourceFile,
+		Name: configFile.Path(),
+	})
 	if err != nil {
 		return fmt.Errorf("%s %s profile: %w", configFile.Path(), match.Name(), err)
 	}
@@ -108,13 +111,16 @@ func (l profileFromHostLoader) Configure(cfg *config.Config) error {
 }
 
 func (l profileFromHostLoader) isAnyAuthConfigured(cfg *config.Config) bool {
+	// If any of the auth-specific attributes are set, we can skip profile resolution.
 	for _, a := range config.ConfigAttributes {
-		if a.Auth == "" {
+		if !a.HasAuthAttribute() {
 			continue
 		}
 		if !a.IsZero(cfg) {
 			return true
 		}
 	}
-	return false
+	// If the auth type is set, we can skip profile resolution.
+	// For example, to force "azure-cli", only the host and the auth type will be set.
+	return cfg.AuthType != ""
 }

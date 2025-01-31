@@ -15,14 +15,18 @@ var cmdOverrides []func(*cobra.Command)
 
 func New() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "query-history",
-		Short:   `Access the history of queries through SQL warehouses.`,
-		Long:    `Access the history of queries through SQL warehouses.`,
+		Use:   "query-history",
+		Short: `A service responsible for storing and retrieving the list of queries run against SQL endpoints and serverless compute.`,
+		Long: `A service responsible for storing and retrieving the list of queries run
+  against SQL endpoints and serverless compute.`,
 		GroupID: "sql",
 		Annotations: map[string]string{
 			"package": "sql",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newList())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -49,7 +53,7 @@ func newList() *cobra.Command {
 	// TODO: short flags
 
 	// TODO: complex arg: filter_by
-	cmd.Flags().BoolVar(&listReq.IncludeMetrics, "include-metrics", listReq.IncludeMetrics, `Whether to include metrics about query.`)
+	cmd.Flags().BoolVar(&listReq.IncludeMetrics, "include-metrics", listReq.IncludeMetrics, `Whether to include the query metrics with each query.`)
 	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Limit the number of results returned in one page.`)
 	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `A token that can be used to get the next page of results.`)
 
@@ -57,14 +61,17 @@ func newList() *cobra.Command {
 	cmd.Short = `List Queries.`
 	cmd.Long = `List Queries.
   
-  List the history of queries through SQL warehouses.
+  List the history of queries through SQL warehouses, and serverless compute.
   
-  You can filter by user ID, warehouse ID, status, and time range.`
+  You can filter by user ID, warehouse ID, status, and time range. Most recently
+  started queries are returned first (up to max_results in request). The
+  pagination token returned in response can be used to list subsequent query
+  statuses.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -73,7 +80,7 @@ func newList() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.QueryHistory.ListAll(ctx, listReq)
+		response, err := w.QueryHistory.List(ctx, listReq)
 		if err != nil {
 			return err
 		}
@@ -90,12 +97,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service QueryHistory

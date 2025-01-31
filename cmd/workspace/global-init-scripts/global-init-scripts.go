@@ -35,6 +35,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -68,19 +75,23 @@ func newCreate() *cobra.Command {
 	cmd.Short = `Create init script.`
 	cmd.Long = `Create init script.
   
-  Creates a new global init script in this workspace.`
+  Creates a new global init script in this workspace.
+
+  Arguments:
+    NAME: The name of the script
+    SCRIPT: The Base64-encoded content of the script.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'name', 'script' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -90,9 +101,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -121,12 +138,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -147,7 +158,10 @@ func newDelete() *cobra.Command {
 	cmd.Short = `Delete init script.`
 	cmd.Long = `Delete init script.
   
-  Deletes a global init script.`
+  Deletes a global init script.
+
+  Arguments:
+    SCRIPT_ID: The ID of the global init script.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -194,12 +208,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -220,7 +228,10 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get an init script.`
 	cmd.Long = `Get an init script.
   
-  Gets all the details of a script, including its Base64-encoded contents.`
+  Gets all the details of a script, including its Base64-encoded contents.
+
+  Arguments:
+    SCRIPT_ID: The ID of the global init script.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -267,12 +278,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -291,7 +296,7 @@ func newList() *cobra.Command {
   Get a list of all global init scripts for this workspace. This returns all
   properties for each script but **not** the script contents. To retrieve the
   contents of a script, use the [get a global init
-  script](#operation/get-script) operation.`
+  script](:method:globalinitscripts/get) operation.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -299,11 +304,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.GlobalInitScripts.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.GlobalInitScripts.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -316,12 +318,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -350,19 +346,24 @@ func newUpdate() *cobra.Command {
 	cmd.Long = `Update init script.
   
   Updates a global init script, specifying only the fields to change. All fields
-  are optional. Unspecified fields retain their current value.`
+  are optional. Unspecified fields retain their current value.
+
+  Arguments:
+    SCRIPT_ID: The ID of the global init script.
+    NAME: The name of the script
+    SCRIPT: The Base64-encoded content of the script.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(1)(cmd, args)
+			err := root.ExactArgs(1)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, provide only SCRIPT_ID as positional arguments. Provide 'name', 'script' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -372,9 +373,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.ScriptId = args[0]
@@ -402,12 +409,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service GlobalInitScripts

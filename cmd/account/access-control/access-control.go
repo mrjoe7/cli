@@ -29,6 +29,11 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newGetAssignableRolesForResource())
+	cmd.AddCommand(newGetRuleSet())
+	cmd.AddCommand(newUpdateRuleSet())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -59,12 +64,15 @@ func newGetAssignableRolesForResource() *cobra.Command {
   
   Gets all the roles that can be granted on an account level resource. A role is
   grantable if the rule set on the resource can contain an access rule of the
-  role.`
+  role.
+
+  Arguments:
+    RESOURCE: The resource name for which assignable roles will be listed.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -94,12 +102,6 @@ func newGetAssignableRolesForResource() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetAssignableRolesForResource())
-	})
-}
-
 // start get-rule-set command
 
 // Slice with functions to override default command behavior.
@@ -122,12 +124,23 @@ func newGetRuleSet() *cobra.Command {
   
   Get a rule set by its name. A rule set is always attached to a resource and
   contains a list of access rules on the said resource. Currently only a default
-  rule set for each resource is supported.`
+  rule set for each resource is supported.
+
+  Arguments:
+    NAME: The ruleset name associated with the request.
+    ETAG: Etag used for versioning. The response is at least as fresh as the eTag
+      provided. Etag is used for optimistic concurrency control as a way to help
+      prevent simultaneous updates of a rule set from overwriting each other. It
+      is strongly suggested that systems make use of the etag in the read ->
+      modify -> write pattern to perform rule set updates in order to avoid race
+      conditions that is get an etag from a GET rule set request, and pass it
+      with the PUT update request to identify the rule set version you are
+      updating.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -156,12 +169,6 @@ func newGetRuleSet() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetRuleSet())
-	})
 }
 
 // start update-rule-set command
@@ -198,9 +205,15 @@ func newUpdateRuleSet() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateRuleSetJson.Unmarshal(&updateRuleSetReq)
-			if err != nil {
-				return err
+			diags := updateRuleSetJson.Unmarshal(&updateRuleSetReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
@@ -223,12 +236,6 @@ func newUpdateRuleSet() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdateRuleSet())
-	})
 }
 
 // end service AccountAccessControl

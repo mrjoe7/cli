@@ -2,12 +2,13 @@ package bundle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/databricks/cli/bundle/config"
 	"github.com/databricks/cli/bundle/env"
-	"github.com/databricks/cli/folders"
+	"github.com/databricks/cli/libs/folders"
 )
 
 // getRootEnv returns the value of the bundle root environment variable
@@ -21,7 +22,7 @@ func getRootEnv(ctx context.Context) (string, error) {
 	}
 	stat, err := os.Stat(path)
 	if err == nil && !stat.IsDir() {
-		err = fmt.Errorf("not a directory")
+		err = errors.New("not a directory")
 	}
 	if err != nil {
 		return "", fmt.Errorf(`invalid bundle root %s="%s": %w`, env.RootVariable, path, err)

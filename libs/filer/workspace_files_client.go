@@ -19,6 +19,7 @@ import (
 	"github.com/databricks/databricks-sdk-go"
 	"github.com/databricks/databricks-sdk-go/apierr"
 	"github.com/databricks/databricks-sdk-go/client"
+	"github.com/databricks/databricks-sdk-go/marshal"
 	"github.com/databricks/databricks-sdk-go/service/workspace"
 )
 
@@ -35,22 +36,36 @@ func (entry wsfsDirEntry) Info() (fs.FileInfo, error) {
 	return entry.wsfsFileInfo, nil
 }
 
+func wsfsDirEntriesFromObjectInfos(objects []workspace.ObjectInfo) []fs.DirEntry {
+	info := make([]fs.DirEntry, len(objects))
+	for i, v := range objects {
+		info[i] = wsfsDirEntry{wsfsFileInfo{ObjectInfo: v}}
+	}
+
+	// Sort by name for parity with os.ReadDir.
+	sort.Slice(info, func(i, j int) bool { return info[i].Name() < info[j].Name() })
+	return info
+}
+
 // Type that implements fs.FileInfo for WSFS.
 type wsfsFileInfo struct {
-	oi workspace.ObjectInfo
+	workspace.ObjectInfo
+
+	// The export format of a notebook. This is not exposed by the SDK.
+	ReposExportFormat workspace.ExportFormat `json:"repos_export_format,omitempty"`
 }
 
 func (info wsfsFileInfo) Name() string {
-	return path.Base(info.oi.Path)
+	return path.Base(info.ObjectInfo.Path)
 }
 
 func (info wsfsFileInfo) Size() int64 {
-	return info.oi.Size
+	return info.ObjectInfo.Size
 }
 
 func (info wsfsFileInfo) Mode() fs.FileMode {
-	switch info.oi.ObjectType {
-	case workspace.ObjectTypeDirectory:
+	switch info.ObjectInfo.ObjectType {
+	case workspace.ObjectTypeDirectory, workspace.ObjectTypeRepo:
 		return fs.ModeDir
 	default:
 		return fs.ModePerm
@@ -58,15 +73,41 @@ func (info wsfsFileInfo) Mode() fs.FileMode {
 }
 
 func (info wsfsFileInfo) ModTime() time.Time {
-	return time.UnixMilli(info.oi.ModifiedAt)
+	return time.UnixMilli(info.ObjectInfo.ModifiedAt)
 }
 
 func (info wsfsFileInfo) IsDir() bool {
-	return info.oi.ObjectType == workspace.ObjectTypeDirectory
+	return info.Mode() == fs.ModeDir
 }
 
 func (info wsfsFileInfo) Sys() any {
-	return info.oi
+	return info.ObjectInfo
+}
+
+func (info wsfsFileInfo) WorkspaceObjectInfo() workspace.ObjectInfo {
+	return info.ObjectInfo
+}
+
+// UnmarshalJSON is a custom unmarshaller for the wsfsFileInfo struct.
+// It must be defined for this type because otherwise the implementation
+// of the embedded ObjectInfo type will be used.
+func (info *wsfsFileInfo) UnmarshalJSON(b []byte) error {
+	return marshal.Unmarshal(b, info)
+}
+
+// MarshalJSON is a custom marshaller for the wsfsFileInfo struct.
+// It must be defined for this type because otherwise the implementation
+// of the embedded ObjectInfo type will be used.
+func (info *wsfsFileInfo) MarshalJSON() ([]byte, error) {
+	return marshal.Marshal(info)
+}
+
+// Interface for *client.DatabricksClient from the Databricks Go SDK. Abstracted
+// as an interface to allow for mocking in tests.
+type apiClient interface {
+	Do(ctx context.Context, method, path string,
+		headers map[string]string, queryString map[string]any, request, response any,
+		visitors ...func(*http.Request) error) error
 }
 
 // WorkspaceFilesClient implements the files-in-workspace API.
@@ -75,7 +116,7 @@ func (info wsfsFileInfo) Sys() any {
 // It can access any workspace path if files-in-workspace is enabled.
 type WorkspaceFilesClient struct {
 	workspaceClient *databricks.WorkspaceClient
-	apiClient       *client.DatabricksClient
+	apiClient       apiClient
 
 	// File operations will be relative to this path.
 	root WorkspaceRootPath
@@ -115,7 +156,7 @@ func (w *WorkspaceFilesClient) Write(ctx context.Context, name string, reader io
 		return err
 	}
 
-	err = w.apiClient.Do(ctx, http.MethodPost, urlPath, nil, body, nil)
+	err = w.apiClient.Do(ctx, http.MethodPost, urlPath, nil, nil, body, nil)
 
 	// Return early on success.
 	if err == nil {
@@ -137,6 +178,9 @@ func (w *WorkspaceFilesClient) Write(ctx context.Context, name string, reader io
 		// Create parent directory.
 		err = w.workspaceClient.Workspace.MkdirsByPath(ctx, path.Dir(absPath))
 		if err != nil {
+			if errors.As(err, &aerr) && aerr.StatusCode == http.StatusForbidden {
+				return PermissionError{absPath}
+			}
 			return fmt.Errorf("unable to mkdir to write file %s: %w", absPath, err)
 		}
 
@@ -151,7 +195,7 @@ func (w *WorkspaceFilesClient) Write(ctx context.Context, name string, reader io
 
 	// This API returns 400 if the file already exists, when the object type is notebook
 	regex := regexp.MustCompile(`Path \((.*)\) already exists.`)
-	if aerr.StatusCode == http.StatusBadRequest && regex.Match([]byte(aerr.Message)) {
+	if aerr.StatusCode == http.StatusBadRequest && regex.MatchString(aerr.Message) {
 		// Parse file path from regex capture group
 		matches := regex.FindStringSubmatch(aerr.Message)
 		if len(matches) == 2 {
@@ -160,6 +204,11 @@ func (w *WorkspaceFilesClient) Write(ctx context.Context, name string, reader io
 
 		// Default to path specified to filer.Write if regex capture fails
 		return FileAlreadyExistsError{absPath}
+	}
+
+	// This API returns StatusForbidden when you have read access but don't have write access to a file
+	if aerr.StatusCode == http.StatusForbidden {
+		return PermissionError{absPath}
 	}
 
 	return err
@@ -254,22 +303,16 @@ func (w *WorkspaceFilesClient) ReadDir(ctx context.Context, name string) ([]fs.D
 			return nil, err
 		}
 
-		// This API returns a 404 if the specified path does not exist.
+		// NOTE: This API returns a 404 if the specified path does not exist,
+		// but can also do so if we don't have read access.
 		if aerr.StatusCode == http.StatusNotFound {
 			return nil, NoSuchDirectoryError{path.Dir(absPath)}
 		}
-
 		return nil, err
 	}
 
-	info := make([]fs.DirEntry, len(objects))
-	for i, v := range objects {
-		info[i] = wsfsDirEntry{wsfsFileInfo{oi: v}}
-	}
-
-	// Sort by name for parity with os.ReadDir.
-	sort.Slice(info, func(i, j int) bool { return info[i].Name() < info[j].Name() })
-	return info, nil
+	// Convert to fs.DirEntry.
+	return wsfsDirEntriesFromObjectInfos(objects), nil
 }
 
 func (w *WorkspaceFilesClient) Mkdir(ctx context.Context, name string) error {
@@ -288,7 +331,23 @@ func (w *WorkspaceFilesClient) Stat(ctx context.Context, name string) (fs.FileIn
 		return nil, err
 	}
 
-	info, err := w.workspaceClient.Workspace.GetStatusByPath(ctx, absPath)
+	var stat wsfsFileInfo
+
+	// Perform bespoke API call because "return_export_info" is not exposed by the SDK.
+	// We need "repos_export_format" to determine if the file is a py or a ipynb notebook.
+	// This is not exposed by the SDK so we need to make a direct API call.
+	err = w.apiClient.Do(
+		ctx,
+		http.MethodGet,
+		"/api/2.0/workspace/get-status",
+		nil,
+		nil,
+		map[string]string{
+			"path":               absPath,
+			"return_export_info": "true",
+		},
+		&stat,
+	)
 	if err != nil {
 		// If we got an API error we deal with it below.
 		var aerr *apierr.APIError
@@ -302,5 +361,5 @@ func (w *WorkspaceFilesClient) Stat(ctx context.Context, name string) (fs.FileIn
 		}
 	}
 
-	return wsfsFileInfo{*info}, nil
+	return stat, nil
 }

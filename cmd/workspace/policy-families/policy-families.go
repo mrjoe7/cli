@@ -32,6 +32,10 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -56,16 +60,22 @@ func newGet() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().Int64Var(&getReq.Version, "version", getReq.Version, `The version number for the family to fetch.`)
+
 	cmd.Use = "get POLICY_FAMILY_ID"
 	cmd.Short = `Get policy family information.`
 	cmd.Long = `Get policy family information.
   
-  Retrieve the information for an policy family based on its identifier.`
+  Retrieve the information for an policy family based on its identifier and
+  version
+
+  Arguments:
+    POLICY_FAMILY_ID: The family ID about which to retrieve information.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -95,12 +105,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -117,19 +121,20 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
-	cmd.Flags().Int64Var(&listReq.MaxResults, "max-results", listReq.MaxResults, `The max number of policy families to return.`)
+	cmd.Flags().Int64Var(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of policy families to return.`)
 	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `A token that can be used to get the next page of results.`)
 
 	cmd.Use = "list"
 	cmd.Short = `List policy families.`
 	cmd.Long = `List policy families.
   
-  Retrieve a list of policy families. This API is paginated.`
+  Returns the list of policy definition types available to use at their latest
+  version. This API is paginated.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -138,11 +143,8 @@ func newList() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.PolicyFamilies.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.PolicyFamilies.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -155,12 +157,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service PolicyFamilies

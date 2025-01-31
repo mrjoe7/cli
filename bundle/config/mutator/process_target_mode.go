@@ -3,15 +3,14 @@ package mutator
 import (
 	"context"
 	"fmt"
-	"path"
 	"strings"
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
-	"github.com/databricks/cli/libs/auth"
+	"github.com/databricks/cli/libs/diag"
+	"github.com/databricks/cli/libs/dyn"
+	"github.com/databricks/cli/libs/iamutil"
 	"github.com/databricks/cli/libs/log"
-	"github.com/databricks/databricks-sdk-go/service/jobs"
-	"github.com/databricks/databricks-sdk-go/service/ml"
 )
 
 type processTargetMode struct{}
@@ -29,132 +28,135 @@ func (m *processTargetMode) Name() string {
 // Mark all resources as being for 'development' purposes, i.e.
 // changing their their name, adding tags, and (in the future)
 // marking them as 'hidden' in the UI.
-func transformDevelopmentMode(b *bundle.Bundle) error {
-	r := b.Config.Resources
+func transformDevelopmentMode(ctx context.Context, b *bundle.Bundle) {
+	if !b.Config.Bundle.Deployment.Lock.IsExplicitlyEnabled() {
+		log.Infof(ctx, "Development mode: disabling deployment lock since bundle.deployment.lock.enabled is not set to true")
+		disabled := false
+		b.Config.Bundle.Deployment.Lock.Enabled = &disabled
+	}
 
+	t := &b.Config.Presets
 	shortName := b.Config.Workspace.CurrentUser.ShortName
-	prefix := "[dev " + shortName + "] "
 
-	// Generate a normalized version of the short name that can be used as a tag value.
-	tagValue := b.Tagging.NormalizeValue(shortName)
-
-	for i := range r.Jobs {
-		r.Jobs[i].Name = prefix + r.Jobs[i].Name
-		if r.Jobs[i].Tags == nil {
-			r.Jobs[i].Tags = make(map[string]string)
-		}
-		r.Jobs[i].Tags["dev"] = tagValue
-		if r.Jobs[i].MaxConcurrentRuns == 0 {
-			r.Jobs[i].MaxConcurrentRuns = developmentConcurrentRuns
-		}
-
-		// Pause each job. As an exception, we don't pause jobs that are explicitly
-		// marked as "unpaused". This allows users to override the default behavior
-		// of the development mode.
-		if r.Jobs[i].Schedule != nil && r.Jobs[i].Schedule.PauseStatus != jobs.PauseStatusUnpaused {
-			r.Jobs[i].Schedule.PauseStatus = jobs.PauseStatusPaused
-		}
-		if r.Jobs[i].Continuous != nil && r.Jobs[i].Schedule.PauseStatus != jobs.PauseStatusUnpaused {
-			r.Jobs[i].Continuous.PauseStatus = jobs.PauseStatusPaused
-		}
-		if r.Jobs[i].Trigger != nil && r.Jobs[i].Schedule.PauseStatus != jobs.PauseStatusUnpaused {
-			r.Jobs[i].Trigger.PauseStatus = jobs.PauseStatusPaused
-		}
+	if t.NamePrefix == "" {
+		t.NamePrefix = "[dev " + shortName + "] "
 	}
 
-	for i := range r.Pipelines {
-		r.Pipelines[i].Name = prefix + r.Pipelines[i].Name
-		r.Pipelines[i].Development = true
-		// (pipelines don't yet support tags)
+	if t.Tags == nil {
+		t.Tags = map[string]string{}
+	}
+	_, exists := t.Tags["dev"]
+	if !exists {
+		t.Tags["dev"] = b.Tagging.NormalizeValue(shortName)
 	}
 
-	for i := range r.Models {
-		r.Models[i].Name = prefix + r.Models[i].Name
-		r.Models[i].Tags = append(r.Models[i].Tags, ml.ModelTag{Key: "dev", Value: ""})
+	if t.JobsMaxConcurrentRuns == 0 {
+		t.JobsMaxConcurrentRuns = developmentConcurrentRuns
 	}
 
-	for i := range r.Experiments {
-		filepath := r.Experiments[i].Name
-		dir := path.Dir(filepath)
-		base := path.Base(filepath)
-		if dir == "." {
-			r.Experiments[i].Name = prefix + base
+	if t.TriggerPauseStatus == "" {
+		t.TriggerPauseStatus = config.Paused
+	}
+
+	if !config.IsExplicitlyDisabled(t.PipelinesDevelopment) {
+		enabled := true
+		t.PipelinesDevelopment = &enabled
+	}
+}
+
+func validateDevelopmentMode(b *bundle.Bundle) diag.Diagnostics {
+	var diags diag.Diagnostics
+	p := b.Config.Presets
+	u := b.Config.Workspace.CurrentUser
+
+	// Make sure presets don't set the trigger status to UNPAUSED;
+	// this could be surprising since most users (and tools) expect triggers
+	// to be paused in development.
+	// (Note that there still is an exceptional case where users set the trigger
+	// status to UNPAUSED at the level of an individual object, whic hwas
+	// historically allowed.)
+	if p.TriggerPauseStatus == config.Unpaused {
+		diags = diags.Append(diag.Diagnostic{
+			Severity:  diag.Error,
+			Summary:   "target with 'mode: development' cannot set trigger pause status to UNPAUSED by default",
+			Locations: []dyn.Location{b.Config.GetLocation("presets.trigger_pause_status")},
+		})
+	}
+
+	// Make sure this development copy has unique names and paths to avoid conflicts
+	if path := findNonUserPath(b); path != "" {
+		if path == "artifact_path" && strings.HasPrefix(b.Config.Workspace.ArtifactPath, "/Volumes") {
+			// For Volumes paths we recommend including the current username as a substring
+			diags = diags.Extend(diag.Errorf("%s should contain the current username or ${workspace.current_user.short_name} to ensure uniqueness when using 'mode: development'", path))
 		} else {
-			r.Experiments[i].Name = dir + "/" + prefix + base
+			// For non-Volumes paths recommend simply putting things in the home folder
+			diags = diags.Extend(diag.Errorf("%s must start with '~/' or contain the current username to ensure uniqueness when using 'mode: development'", path))
 		}
-		r.Experiments[i].Tags = append(r.Experiments[i].Tags, ml.ExperimentTag{Key: "dev", Value: tagValue})
 	}
-
-	for i := range r.ModelServingEndpoints {
-		prefix = "dev_" + b.Config.Workspace.CurrentUser.ShortName + "_"
-		r.ModelServingEndpoints[i].Name = prefix + r.ModelServingEndpoints[i].Name
-		// (model serving doesn't yet support tags)
+	if p.NamePrefix != "" && !strings.Contains(p.NamePrefix, u.ShortName) && !strings.Contains(p.NamePrefix, u.UserName) {
+		// Resources such as pipelines require a unique name, e.g. '[dev steve] my_pipeline'.
+		// For this reason we require the name prefix to contain the current username;
+		// it's a pitfall for users if they don't include it and later find out that
+		// only a single user can do development deployments.
+		diags = diags.Append(diag.Diagnostic{
+			Severity:  diag.Error,
+			Summary:   "prefix should contain the current username or ${workspace.current_user.short_name} to ensure uniqueness when using 'mode: development'",
+			Locations: []dyn.Location{b.Config.GetLocation("presets.name_prefix")},
+		})
 	}
-
-	for i := range r.RegisteredModels {
-		prefix = "dev_" + b.Config.Workspace.CurrentUser.ShortName + "_"
-		r.RegisteredModels[i].Name = prefix + r.RegisteredModels[i].Name
-		// (registered models in Unity Catalog don't yet support tags)
-	}
-
-	return nil
+	return diags
 }
 
-func validateDevelopmentMode(b *bundle.Bundle) error {
-	if path := findIncorrectPath(b, config.Development); path != "" {
-		return fmt.Errorf("%s must start with '~/' or contain the current username when using 'mode: development'", path)
-	}
-	return nil
-}
-
-func findIncorrectPath(b *bundle.Bundle, mode config.Mode) string {
-	username := b.Config.Workspace.CurrentUser.UserName
-	containsExpected := true
-	if mode == config.Production {
-		containsExpected = false
+// findNonUserPath finds the first workspace path such as root_path that doesn't
+// contain the current username or current user's shortname.
+func findNonUserPath(b *bundle.Bundle) string {
+	containsName := func(path string) bool {
+		username := b.Config.Workspace.CurrentUser.UserName
+		shortname := b.Config.Workspace.CurrentUser.ShortName
+		return strings.Contains(path, username) || strings.Contains(path, shortname)
 	}
 
-	if strings.Contains(b.Config.Workspace.RootPath, username) != containsExpected && b.Config.Workspace.RootPath != "" {
+	if b.Config.Workspace.RootPath != "" && !containsName(b.Config.Workspace.RootPath) {
 		return "root_path"
 	}
-	if strings.Contains(b.Config.Workspace.StatePath, username) != containsExpected {
-		return "state_path"
-	}
-	if strings.Contains(b.Config.Workspace.FilePath, username) != containsExpected {
+	if b.Config.Workspace.FilePath != "" && !containsName(b.Config.Workspace.FilePath) {
 		return "file_path"
 	}
-	if strings.Contains(b.Config.Workspace.ArtifactPath, username) != containsExpected {
+	if b.Config.Workspace.ResourcePath != "" && !containsName(b.Config.Workspace.ResourcePath) {
+		return "resource_path"
+	}
+	if b.Config.Workspace.ArtifactPath != "" && !containsName(b.Config.Workspace.ArtifactPath) {
 		return "artifact_path"
+	}
+	if b.Config.Workspace.StatePath != "" && !containsName(b.Config.Workspace.StatePath) {
+		return "state_path"
 	}
 	return ""
 }
 
-func validateProductionMode(ctx context.Context, b *bundle.Bundle, isPrincipalUsed bool) error {
-	if b.Config.Bundle.Git.Inferred {
-		env := b.Config.Bundle.Target
-		log.Warnf(ctx, "target with 'mode: production' should specify an explicit 'targets.%s.git' configuration", env)
-	}
-
+func validateProductionMode(ctx context.Context, b *bundle.Bundle, isPrincipalUsed bool) diag.Diagnostics {
 	r := b.Config.Resources
 	for i := range r.Pipelines {
 		if r.Pipelines[i].Development {
-			return fmt.Errorf("target with 'mode: production' cannot specify a pipeline with 'development: true'")
+			return diag.Errorf("target with 'mode: production' cannot include a pipeline with 'development: true'")
 		}
 	}
 
-	if !isPrincipalUsed {
-		if path := findIncorrectPath(b, config.Production); path != "" {
-			message := "%s must not contain the current username when using 'mode: production'"
-			if path == "root_path" {
-				return fmt.Errorf(message+"\n  tip: set workspace.root_path to a shared path such as /Shared/.bundle/${bundle.name}/${bundle.target}", path)
-			} else {
-				return fmt.Errorf(message, path)
-			}
+	// We need to verify that there is only a single deployment of the current target.
+	// The best way to enforce this is to explicitly set root_path.
+	advice := fmt.Sprintf(
+		"set 'workspace.root_path' to make sure only one copy is deployed. A common practice is to use a username or principal name in this path, i.e. root_path: /Workspace/Users/%s/.bundle/${bundle.name}/${bundle.target}",
+		b.Config.Workspace.CurrentUser.UserName,
+	)
+	if !isExplicitRootSet(b) {
+		if isRunAsSet(r) || isPrincipalUsed {
+			// Just setting run_as is not enough to guarantee a single deployment,
+			// and neither is setting a principal.
+			// We only show a warning for these cases since we didn't historically
+			// report an error for them.
+			return diag.Recommendationf("target with 'mode: production' should %s", advice)
 		}
-
-		if !isRunAsSet(r) {
-			return fmt.Errorf("'run_as' must be set for all jobs when using 'mode: production'")
-		}
+		return diag.Errorf("target with 'mode: production' must %s", advice)
 	}
 	return nil
 }
@@ -171,21 +173,26 @@ func isRunAsSet(r config.Resources) bool {
 	return true
 }
 
-func (m *processTargetMode) Apply(ctx context.Context, b *bundle.Bundle) error {
+func isExplicitRootSet(b *bundle.Bundle) bool {
+	return b.Target != nil && b.Target.Workspace != nil && b.Target.Workspace.RootPath != ""
+}
+
+func (m *processTargetMode) Apply(ctx context.Context, b *bundle.Bundle) diag.Diagnostics {
 	switch b.Config.Bundle.Mode {
 	case config.Development:
-		err := validateDevelopmentMode(b)
-		if err != nil {
-			return err
+		diags := validateDevelopmentMode(b)
+		if diags.HasError() {
+			return diags
 		}
-		return transformDevelopmentMode(b)
+		transformDevelopmentMode(ctx, b)
+		return diags
 	case config.Production:
-		isPrincipal := auth.IsServicePrincipal(b.Config.Workspace.CurrentUser.UserName)
+		isPrincipal := iamutil.IsServicePrincipal(b.Config.Workspace.CurrentUser.User)
 		return validateProductionMode(ctx, b, isPrincipal)
 	case "":
 		// No action
 	default:
-		return fmt.Errorf("unsupported value '%s' specified for 'mode': must be either 'development' or 'production'", b.Config.Bundle.Mode)
+		return diag.Errorf("unsupported value '%s' specified for 'mode': must be either 'development' or 'production'", b.Config.Bundle.Mode)
 	}
 
 	return nil

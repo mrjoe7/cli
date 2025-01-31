@@ -32,6 +32,23 @@ func TestLoaderSkipsExistingAuth(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestLoaderSkipsExplicitAuthType(t *testing.T) {
+	cfg := config.Config{
+		Loaders: []config.Loader{
+			ResolveProfileFromHost,
+		},
+		ConfigFile: "testdata/databrickscfg",
+		Host:       "https://default",
+		AuthType:   "azure-cli",
+	}
+
+	err := cfg.EnsureResolved()
+	assert.NoError(t, err)
+	assert.Equal(t, "azure-cli", cfg.AuthType)
+	assert.Empty(t, cfg.Profile)
+	assert.Empty(t, cfg.Token)
+}
+
 func TestLoaderSkipsNonExistingConfigFile(t *testing.T) {
 	cfg := config.Config{
 		Loaders: []config.Loader{
@@ -51,7 +68,7 @@ func TestLoaderErrorsOnInvalidFile(t *testing.T) {
 		Loaders: []config.Loader{
 			ResolveProfileFromHost,
 		},
-		ConfigFile: "testdata/badcfg",
+		ConfigFile: "profile/testdata/badcfg",
 		Host:       "https://default",
 	}
 
@@ -64,7 +81,7 @@ func TestLoaderSkipsNoMatchingHost(t *testing.T) {
 		Loaders: []config.Loader{
 			ResolveProfileFromHost,
 		},
-		ConfigFile: "testdata/databrickscfg",
+		ConfigFile: "profile/testdata/databrickscfg",
 		Host:       "https://noneofthehostsmatch",
 	}
 
@@ -78,7 +95,7 @@ func TestLoaderMatchingHost(t *testing.T) {
 		Loaders: []config.Loader{
 			ResolveProfileFromHost,
 		},
-		ConfigFile: "testdata/databrickscfg",
+		ConfigFile: "profile/testdata/databrickscfg",
 		Host:       "https://default",
 	}
 
@@ -93,7 +110,7 @@ func TestLoaderMatchingHostWithQuery(t *testing.T) {
 		Loaders: []config.Loader{
 			ResolveProfileFromHost,
 		},
-		ConfigFile: "testdata/databrickscfg",
+		ConfigFile: "profile/testdata/databrickscfg",
 		Host:       "https://query/?foo=bar",
 	}
 
@@ -108,7 +125,7 @@ func TestLoaderErrorsOnMultipleMatches(t *testing.T) {
 		Loaders: []config.Loader{
 			ResolveProfileFromHost,
 		},
-		ConfigFile: "testdata/databrickscfg",
+		ConfigFile: "profile/testdata/databrickscfg",
 		Host:       "https://foo/bar",
 	}
 

@@ -25,6 +25,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -63,12 +70,15 @@ func newCreate() *cobra.Command {
   credentials * **GcpServiceAcountKey** for GCP credentials.
   
   The caller must be a metastore admin and have the
-  **CREATE_STORAGE_CREDENTIAL** privilege on the metastore.`
+  **CREATE_STORAGE_CREDENTIAL** privilege on the metastore.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -78,9 +88,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		createReq.MetastoreId = args[0]
@@ -102,12 +118,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -133,12 +143,16 @@ func newDelete() *cobra.Command {
 	cmd.Long = `Delete a storage credential.
   
   Deletes a storage credential from the metastore. The caller must be an owner
-  of the storage credential.`
+  of the storage credential.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID
+    STORAGE_CREDENTIAL_NAME: Name of the storage credential.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -169,12 +183,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -197,12 +205,16 @@ func newGet() *cobra.Command {
   
   Gets a storage credential from the metastore. The caller must be a metastore
   admin, the owner of the storage credential, or have a level of privilege on
-  the storage credential.`
+  the storage credential.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID
+    STORAGE_CREDENTIAL_NAME: Name of the storage credential.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -233,12 +245,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -260,12 +266,15 @@ func newList() *cobra.Command {
 	cmd.Long = `Get all storage credentials assigned to a metastore.
   
   Gets a list of all storage credentials that have been assigned to given
-  metastore.`
+  metastore.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -276,11 +285,8 @@ func newList() *cobra.Command {
 
 		listReq.MetastoreId = args[0]
 
-		response, err := a.StorageCredentials.List(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := a.StorageCredentials.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -293,12 +299,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -327,12 +327,16 @@ func newUpdate() *cobra.Command {
   
   Updates a storage credential on the metastore. The caller must be the owner of
   the storage credential. If the caller is a metastore admin, only the __owner__
-  credential can be changed.`
+  credential can be changed.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID
+    STORAGE_CREDENTIAL_NAME: Name of the storage credential.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -342,9 +346,15 @@ func newUpdate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.MetastoreId = args[0]
@@ -367,12 +377,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service AccountStorageCredentials

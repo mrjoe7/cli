@@ -33,6 +33,14 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newPatch())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -79,7 +87,7 @@ func newCreate() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -89,9 +97,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -114,12 +128,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -140,7 +148,10 @@ func newDelete() *cobra.Command {
 	cmd.Short = `Delete a group.`
 	cmd.Long = `Delete a group.
   
-  Deletes a group from the Databricks workspace.`
+  Deletes a group from the Databricks workspace.
+
+  Arguments:
+    ID: Unique ID for a group in the Databricks workspace.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -187,12 +198,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -213,7 +218,10 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get group details.`
 	cmd.Long = `Get group details.
   
-  Gets the information for a specific group in the Databricks workspace.`
+  Gets the information for a specific group in the Databricks workspace.
+
+  Arguments:
+    ID: Unique ID for a group in the Databricks workspace.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -260,12 +268,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -283,12 +285,12 @@ func newList() *cobra.Command {
 	// TODO: short flags
 
 	cmd.Flags().StringVar(&listReq.Attributes, "attributes", listReq.Attributes, `Comma-separated list of attributes to return in response.`)
-	cmd.Flags().IntVar(&listReq.Count, "count", listReq.Count, `Desired number of results per page.`)
+	cmd.Flags().Int64Var(&listReq.Count, "count", listReq.Count, `Desired number of results per page.`)
 	cmd.Flags().StringVar(&listReq.ExcludedAttributes, "excluded-attributes", listReq.ExcludedAttributes, `Comma-separated list of attributes to exclude in response.`)
 	cmd.Flags().StringVar(&listReq.Filter, "filter", listReq.Filter, `Query by which the results have to be filtered.`)
 	cmd.Flags().StringVar(&listReq.SortBy, "sort-by", listReq.SortBy, `Attribute to sort the results.`)
-	cmd.Flags().Var(&listReq.SortOrder, "sort-order", `The order to sort the results.`)
-	cmd.Flags().IntVar(&listReq.StartIndex, "start-index", listReq.StartIndex, `Specifies the index of the first result.`)
+	cmd.Flags().Var(&listReq.SortOrder, "sort-order", `The order to sort the results. Supported values: [ascending, descending]`)
+	cmd.Flags().Int64Var(&listReq.StartIndex, "start-index", listReq.StartIndex, `Specifies the index of the first result.`)
 
 	cmd.Use = "list"
 	cmd.Short = `List group details.`
@@ -299,7 +301,7 @@ func newList() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -308,11 +310,8 @@ func newList() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.Groups.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Groups.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -325,12 +324,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start patch command
@@ -358,7 +351,10 @@ func newPatch() *cobra.Command {
 	cmd.Short = `Update group details.`
 	cmd.Long = `Update group details.
   
-  Partially updates the details of a group.`
+  Partially updates the details of a group.
+
+  Arguments:
+    ID: Unique ID for a group in the Databricks workspace.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -368,9 +364,15 @@ func newPatch() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = patchJson.Unmarshal(&patchReq)
-			if err != nil {
-				return err
+			diags := patchJson.Unmarshal(&patchReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -411,12 +413,6 @@ func newPatch() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newPatch())
-	})
-}
-
 // start update command
 
 // Slice with functions to override default command behavior.
@@ -449,7 +445,10 @@ func newUpdate() *cobra.Command {
 	cmd.Short = `Replace a group.`
 	cmd.Long = `Replace a group.
   
-  Updates the details of a group by replacing the entire group entity.`
+  Updates the details of a group by replacing the entire group entity.
+
+  Arguments:
+    ID: Databricks group ID`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -459,9 +458,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -500,12 +505,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service Groups

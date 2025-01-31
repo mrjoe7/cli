@@ -31,7 +31,7 @@ func setup(t *testing.T) string {
 	return tempHomeDir
 }
 
-func getTempFileWithContent(t *testing.T, tempHomeDir string, content string) *os.File {
+func getTempFileWithContent(t *testing.T, tempHomeDir, content string) *os.File {
 	inp, err := os.CreateTemp(tempHomeDir, "input")
 	assert.NoError(t, err)
 	_, err = inp.WriteString(content)
@@ -75,10 +75,11 @@ func TestDefaultConfigureNoInteractive(t *testing.T) {
 }
 
 func TestConfigFileFromEnvNoInteractive(t *testing.T) {
-	//TODO: Replace with similar test code from go SDK, once we start using it directly
+	// TODO: Replace with similar test code from go SDK, once we start using it directly
 	ctx := context.Background()
 	tempHomeDir := setup(t)
-	cfgPath := filepath.Join(tempHomeDir, ".databrickscfg")
+	defaultCfgPath := filepath.Join(tempHomeDir, ".databrickscfg")
+	cfgPath := filepath.Join(tempHomeDir, "overwrite-databricks-cfg")
 	t.Setenv("DATABRICKS_CONFIG_FILE", cfgPath)
 
 	inp := getTempFileWithContent(t, tempHomeDir, "token\n")
@@ -95,6 +96,13 @@ func TestConfigFileFromEnvNoInteractive(t *testing.T) {
 
 	_, err = os.Stat(cfgPath)
 	assert.NoError(t, err)
+
+	_, err = os.Stat(defaultCfgPath)
+	if runtime.GOOS == "windows" {
+		assert.ErrorContains(t, err, "cannot find the file specified")
+	} else {
+		assert.ErrorContains(t, err, "no such file or directory")
+	}
 
 	cfg, err := ini.Load(cfgPath)
 	assert.NoError(t, err)
@@ -140,9 +148,9 @@ func TestEnvVarsConfigureNoInteractive(t *testing.T) {
 
 	// We should only save host and token for a profile, other env variables should not be saved
 	_, err = defaultSection.GetKey("auth_type")
-	assert.NotNil(t, err)
+	assert.Error(t, err)
 	_, err = defaultSection.GetKey("metadata_service_url")
-	assert.NotNil(t, err)
+	assert.Error(t, err)
 }
 
 func TestEnvVarsConfigureNoArgsNoInteractive(t *testing.T) {

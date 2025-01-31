@@ -31,6 +31,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -67,19 +74,23 @@ func newCreate() *cobra.Command {
   
   Creates a new schema for catalog in the Metatastore. The caller must be a
   metastore admin, or have the **CREATE_SCHEMA** privilege in the parent
-  catalog.`
+  catalog.
+
+  Arguments:
+    NAME: Name of schema, relative to parent catalog.
+    CATALOG_NAME: Name of parent catalog.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'name', 'catalog_name' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -89,9 +100,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -120,12 +137,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -142,12 +153,17 @@ func newDelete() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&deleteReq.Force, "force", deleteReq.Force, `Force deletion even if the schema is not empty.`)
+
 	cmd.Use = "delete FULL_NAME"
 	cmd.Short = `Delete a schema.`
 	cmd.Long = `Delete a schema.
   
   Deletes the specified schema from the parent catalog. The caller must be the
-  owner of the schema or an owner of the parent catalog.`
+  owner of the schema or an owner of the parent catalog.
+
+  Arguments:
+    FULL_NAME: Full name of the schema.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -194,12 +210,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -216,13 +226,18 @@ func newGet() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&getReq.IncludeBrowse, "include-browse", getReq.IncludeBrowse, `Whether to include schemas in the response for which the principal can only access selective metadata for.`)
+
 	cmd.Use = "get FULL_NAME"
 	cmd.Short = `Get a schema.`
 	cmd.Long = `Get a schema.
   
   Gets the specified schema within the metastore. The caller must be a metastore
   admin, the owner of the schema, or a user that has the **USE_SCHEMA**
-  privilege on the schema.`
+  privilege on the schema.
+
+  Arguments:
+    FULL_NAME: Full name of the schema.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -269,12 +284,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -291,6 +300,10 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&listReq.IncludeBrowse, "include-browse", listReq.IncludeBrowse, `Whether to include schemas in the response for which the principal can only access selective metadata for.`)
+	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of schemas to return.`)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque pagination token to go to next page based on previous query.`)
+
 	cmd.Use = "list CATALOG_NAME"
 	cmd.Short = `List schemas.`
 	cmd.Long = `List schemas.
@@ -299,12 +312,15 @@ func newList() *cobra.Command {
   metastore admin or the owner of the parent catalog, all schemas for the
   catalog will be retrieved. Otherwise, only schemas owned by the caller (or for
   which the caller has the **USE_SCHEMA** privilege) will be retrieved. There is
-  no guarantee of a specific ordering of the elements in the array.`
+  no guarantee of a specific ordering of the elements in the array.
+
+  Arguments:
+    CATALOG_NAME: Parent catalog for schemas of interest.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -315,11 +331,8 @@ func newList() *cobra.Command {
 
 		listReq.CatalogName = args[0]
 
-		response, err := w.Schemas.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Schemas.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -332,12 +345,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -359,7 +366,8 @@ func newUpdate() *cobra.Command {
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	cmd.Flags().StringVar(&updateReq.Comment, "comment", updateReq.Comment, `User-provided free-form text description.`)
-	cmd.Flags().StringVar(&updateReq.Name, "name", updateReq.Name, `Name of schema, relative to parent catalog.`)
+	cmd.Flags().Var(&updateReq.EnablePredictiveOptimization, "enable-predictive-optimization", `Whether predictive optimization should be enabled for this object and objects under it. Supported values: [DISABLE, ENABLE, INHERIT]`)
+	cmd.Flags().StringVar(&updateReq.NewName, "new-name", updateReq.NewName, `New name for the schema.`)
 	cmd.Flags().StringVar(&updateReq.Owner, "owner", updateReq.Owner, `Username of current owner of schema.`)
 	// TODO: map via StringToStringVar: properties
 
@@ -371,7 +379,10 @@ func newUpdate() *cobra.Command {
   a metastore admin. If the caller is a metastore admin, only the __owner__
   field can be changed in the update. If the __name__ field must be updated, the
   caller must be a metastore admin or have the **CREATE_SCHEMA** privilege on
-  the parent catalog.`
+  the parent catalog.
+
+  Arguments:
+    FULL_NAME: Full name of the schema.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -381,9 +392,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -422,12 +439,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service Schemas

@@ -44,6 +44,17 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newEdit())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newGetPermissions())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newSetPermissions())
+	cmd.AddCommand(newUpdatePermissions())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -86,19 +97,28 @@ func newCreate() *cobra.Command {
 	cmd.Short = `Create a new instance pool.`
 	cmd.Long = `Create a new instance pool.
   
-  Creates a new instance pool using idle and ready-to-use cloud instances.`
+  Creates a new instance pool using idle and ready-to-use cloud instances.
+
+  Arguments:
+    INSTANCE_POOL_NAME: Pool name requested by the user. Pool name must be unique. Length must be
+      between 1 and 100 characters.
+    NODE_TYPE_ID: This field encodes, through a single value, the resources available to
+      each of the Spark nodes in this cluster. For example, the Spark nodes can
+      be provisioned and optimized for memory or compute intensive workloads. A
+      list of available node types can be retrieved by using the
+      :method:clusters/listNodeTypes API call.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'instance_pool_name', 'node_type_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -108,9 +128,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -139,12 +165,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -168,9 +188,23 @@ func newDelete() *cobra.Command {
 	cmd.Long = `Delete an instance pool.
   
   Deletes the instance pool permanently. The idle instances in the pool are
-  terminated asynchronously.`
+  terminated asynchronously.
+
+  Arguments:
+    INSTANCE_POOL_ID: The instance pool to be terminated.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(0)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'instance_pool_id' in your JSON input")
+			}
+			return nil
+		}
+		return nil
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -178,9 +212,15 @@ func newDelete() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteJson.Unmarshal(&deleteReq)
-			if err != nil {
-				return err
+			diags := deleteJson.Unmarshal(&deleteReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			if len(args) == 0 {
@@ -222,12 +262,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start edit command
 
 // Slice with functions to override default command behavior.
@@ -255,19 +289,29 @@ func newEdit() *cobra.Command {
 	cmd.Short = `Edit an existing instance pool.`
 	cmd.Long = `Edit an existing instance pool.
   
-  Modifies the configuration of an existing instance pool.`
+  Modifies the configuration of an existing instance pool.
+
+  Arguments:
+    INSTANCE_POOL_ID: Instance pool ID
+    INSTANCE_POOL_NAME: Pool name requested by the user. Pool name must be unique. Length must be
+      between 1 and 100 characters.
+    NODE_TYPE_ID: This field encodes, through a single value, the resources available to
+      each of the Spark nodes in this cluster. For example, the Spark nodes can
+      be provisioned and optimized for memory or compute intensive workloads. A
+      list of available node types can be retrieved by using the
+      :method:clusters/listNodeTypes API call.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'instance_pool_id', 'instance_pool_name', 'node_type_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -277,9 +321,15 @@ func newEdit() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = editJson.Unmarshal(&editReq)
-			if err != nil {
-				return err
+			diags := editJson.Unmarshal(&editReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -311,12 +361,6 @@ func newEdit() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newEdit())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -337,7 +381,10 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get instance pool information.`
 	cmd.Long = `Get instance pool information.
   
-  Retrieve the information for an instance pool based on its identifier.`
+  Retrieve the information for an instance pool based on its identifier.
+
+  Arguments:
+    INSTANCE_POOL_ID: The canonical unique identifier for the instance pool.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -384,12 +431,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start get-permission-levels command
 
 // Slice with functions to override default command behavior.
@@ -410,7 +451,10 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get instance pool permission levels.`
 	cmd.Long = `Get instance pool permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    INSTANCE_POOL_ID: The instance pool for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -457,12 +501,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start get-permissions command
 
 // Slice with functions to override default command behavior.
@@ -484,7 +522,10 @@ func newGetPermissions() *cobra.Command {
 	cmd.Long = `Get instance pool permissions.
   
   Gets the permissions of an instance pool. Instance pools can inherit
-  permissions from their root object.`
+  permissions from their root object.
+
+  Arguments:
+    INSTANCE_POOL_ID: The instance pool for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -531,12 +572,6 @@ func newGetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissions())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -560,11 +595,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.InstancePools.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.InstancePools.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -577,12 +609,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start set-permissions command
@@ -609,8 +635,12 @@ func newSetPermissions() *cobra.Command {
 	cmd.Short = `Set instance pool permissions.`
 	cmd.Long = `Set instance pool permissions.
   
-  Sets permissions on an instance pool. Instance pools can inherit permissions
-  from their root object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their root object.
+
+  Arguments:
+    INSTANCE_POOL_ID: The instance pool for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -620,9 +650,15 @@ func newSetPermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setPermissionsJson.Unmarshal(&setPermissionsReq)
-			if err != nil {
-				return err
+			diags := setPermissionsJson.Unmarshal(&setPermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -663,12 +699,6 @@ func newSetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetPermissions())
-	})
-}
-
 // start update-permissions command
 
 // Slice with functions to override default command behavior.
@@ -694,7 +724,10 @@ func newUpdatePermissions() *cobra.Command {
 	cmd.Long = `Update instance pool permissions.
   
   Updates the permissions on an instance pool. Instance pools can inherit
-  permissions from their root object.`
+  permissions from their root object.
+
+  Arguments:
+    INSTANCE_POOL_ID: The instance pool for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -704,9 +737,15 @@ func newUpdatePermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updatePermissionsJson.Unmarshal(&updatePermissionsReq)
-			if err != nil {
-				return err
+			diags := updatePermissionsJson.Unmarshal(&updatePermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -745,12 +784,6 @@ func newUpdatePermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdatePermissions())
-	})
 }
 
 // end service InstancePools
