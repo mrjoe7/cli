@@ -3,8 +3,6 @@
 package system_schemas
 
 import (
-	"fmt"
-
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/databricks/databricks-sdk-go/service/catalog"
@@ -27,6 +25,11 @@ func New() *cobra.Command {
 			"package": "catalog",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newDisable())
+	cmd.AddCommand(newEnable())
+	cmd.AddCommand(newList())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -57,12 +60,16 @@ func newDisable() *cobra.Command {
 	cmd.Long = `Disable a system schema.
   
   Disables the system schema and removes it from the system catalog. The caller
-  must be an account admin or a metastore admin.`
+  must be an account admin or a metastore admin.
+
+  Arguments:
+    METASTORE_ID: The metastore ID under which the system schema lives.
+    SCHEMA_NAME: Full name of the system schema.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -72,10 +79,7 @@ func newDisable() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		disableReq.MetastoreId = args[0]
-		_, err = fmt.Sscan(args[1], &disableReq.SchemaName)
-		if err != nil {
-			return fmt.Errorf("invalid SCHEMA_NAME: %s", args[1])
-		}
+		disableReq.SchemaName = args[1]
 
 		err = w.SystemSchemas.Disable(ctx, disableReq)
 		if err != nil {
@@ -94,12 +98,6 @@ func newDisable() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDisable())
-	})
 }
 
 // start enable command
@@ -123,12 +121,16 @@ func newEnable() *cobra.Command {
 	cmd.Long = `Enable a system schema.
   
   Enables the system schema and adds it to the system catalog. The caller must
-  be an account admin or a metastore admin.`
+  be an account admin or a metastore admin.
+
+  Arguments:
+    METASTORE_ID: The metastore ID under which the system schema lives.
+    SCHEMA_NAME: Full name of the system schema.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -138,10 +140,7 @@ func newEnable() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		enableReq.MetastoreId = args[0]
-		_, err = fmt.Sscan(args[1], &enableReq.SchemaName)
-		if err != nil {
-			return fmt.Errorf("invalid SCHEMA_NAME: %s", args[1])
-		}
+		enableReq.SchemaName = args[1]
 
 		err = w.SystemSchemas.Enable(ctx, enableReq)
 		if err != nil {
@@ -162,12 +161,6 @@ func newEnable() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newEnable())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -184,17 +177,23 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of schemas to return.`)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque pagination token to go to next page based on previous query.`)
+
 	cmd.Use = "list METASTORE_ID"
 	cmd.Short = `List system schemas.`
 	cmd.Long = `List system schemas.
   
   Gets an array of system schemas for a metastore. The caller must be an account
-  admin or a metastore admin.`
+  admin or a metastore admin.
+
+  Arguments:
+    METASTORE_ID: The ID for the metastore in which the system schema resides.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -205,11 +204,8 @@ func newList() *cobra.Command {
 
 		listReq.MetastoreId = args[0]
 
-		response, err := w.SystemSchemas.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.SystemSchemas.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -222,12 +218,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service SystemSchemas

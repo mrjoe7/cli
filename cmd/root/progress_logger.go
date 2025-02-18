@@ -2,7 +2,7 @@ package root
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 
 	"github.com/databricks/cli/libs/cmdio"
@@ -29,9 +29,15 @@ func (f *progressLoggerFlag) resolveModeDefault(format flags.ProgressLogFormat) 
 }
 
 func (f *progressLoggerFlag) initializeContext(ctx context.Context) (context.Context, error) {
+	// No need to initialize the logger if it's already set in the context. This
+	// happens in unit tests where the logger is setup as a fixture.
+	if _, ok := cmdio.FromContext(ctx); ok {
+		return ctx, nil
+	}
+
 	if f.log.level.String() != "disabled" && f.log.file.String() == "stderr" &&
 		f.ProgressLogFormat == flags.ModeInplace {
-		return nil, fmt.Errorf("inplace progress logging cannot be used when log-file is stderr")
+		return nil, errors.New("inplace progress logging cannot be used when log-file is stderr")
 	}
 
 	format := f.ProgressLogFormat
@@ -53,7 +59,7 @@ func initProgressLoggerFlag(cmd *cobra.Command, logFlags *logFlags) *progressLog
 	// Configure defaults from environment, if applicable.
 	// If the provided value is invalid it is ignored.
 	if v, ok := env.Lookup(cmd.Context(), envProgressFormat); ok {
-		f.Set(v)
+		_ = f.Set(v)
 	}
 
 	flags := cmd.PersistentFlags()

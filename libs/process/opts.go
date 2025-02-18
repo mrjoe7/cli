@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sync"
 )
 
 type execOption func(context.Context, *exec.Cmd) error
@@ -48,10 +49,45 @@ func WithStdoutPipe(dst *io.ReadCloser) execOption {
 	}
 }
 
-func WithCombinedOutput(buf *bytes.Buffer) execOption {
+func WithStdinReader(src io.Reader) execOption {
 	return func(_ context.Context, c *exec.Cmd) error {
-		c.Stdout = io.MultiWriter(buf, c.Stdout)
-		c.Stderr = io.MultiWriter(buf, c.Stderr)
+		c.Stdin = src
+		return nil
+	}
+}
+
+func WithStderrWriter(dst io.Writer) execOption {
+	return func(_ context.Context, c *exec.Cmd) error {
+		c.Stderr = dst
+		return nil
+	}
+}
+
+func WithStdoutWriter(dst io.Writer) execOption {
+	return func(_ context.Context, c *exec.Cmd) error {
+		c.Stdout = dst
+		return nil
+	}
+}
+
+// safeWriter is a writer that is safe to use concurrently.
+// It serializes writes to the underlying writer.
+type safeWriter struct {
+	w io.Writer
+	m sync.Mutex
+}
+
+func (s *safeWriter) Write(p []byte) (n int, err error) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	return s.w.Write(p)
+}
+
+func WithCombinedOutput(buf *bytes.Buffer) execOption {
+	sw := &safeWriter{w: buf}
+	return func(_ context.Context, c *exec.Cmd) error {
+		c.Stdout = io.MultiWriter(sw, c.Stdout)
+		c.Stderr = io.MultiWriter(sw, c.Stderr)
 		return nil
 	}
 }

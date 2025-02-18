@@ -3,12 +3,13 @@ package whl
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
 	"github.com/databricks/cli/libs/cmdio"
+	"github.com/databricks/cli/libs/diag"
+	"github.com/databricks/cli/libs/log"
 	"github.com/databricks/cli/libs/python"
 )
 
@@ -26,29 +27,25 @@ func (m *build) Name() string {
 	return fmt.Sprintf("artifacts.whl.Build(%s)", m.name)
 }
 
-func (m *build) Apply(ctx context.Context, b *bundle.Bundle) error {
+func (m *build) Apply(ctx context.Context, b *bundle.Bundle) diag.Diagnostics {
 	artifact, ok := b.Config.Artifacts[m.name]
 	if !ok {
-		return fmt.Errorf("artifact doesn't exist: %s", m.name)
+		return diag.Errorf("artifact doesn't exist: %s", m.name)
 	}
 
-	cmdio.LogString(ctx, fmt.Sprintf("artifacts.whl.Build(%s): Building...", m.name))
-
-	dir := artifact.Path
-
-	distPath := filepath.Join(dir, "dist")
-	os.RemoveAll(distPath)
-	python.CleanupWheelFolder(dir)
+	cmdio.LogString(ctx, fmt.Sprintf("Building %s...", m.name))
 
 	out, err := artifact.Build(ctx)
 	if err != nil {
-		return fmt.Errorf("artifacts.whl.Build(%s): Failed %w, output: %s", m.name, err, out)
+		return diag.Errorf("build failed %s, error: %v, output: %s", m.name, err, out)
 	}
-	cmdio.LogString(ctx, fmt.Sprintf("artifacts.whl.Build(%s): Build succeeded", m.name))
+	log.Infof(ctx, "Build succeeded")
 
+	dir := artifact.Path
+	distPath := filepath.Join(artifact.Path, "dist")
 	wheels := python.FindFilesWithSuffixInPath(distPath, ".whl")
 	if len(wheels) == 0 {
-		return fmt.Errorf("artifacts.whl.Build(%s): cannot find built wheel in %s", m.name, dir)
+		return diag.Errorf("cannot find built wheel in %s for package %s", dir, m.name)
 	}
 	for _, wheel := range wheels {
 		artifact.Files = append(artifact.Files, config.ArtifactFile{

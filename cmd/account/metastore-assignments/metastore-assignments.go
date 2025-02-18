@@ -27,6 +27,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -59,12 +66,16 @@ func newCreate() *cobra.Command {
 	cmd.Short = `Assigns a workspace to a metastore.`
 	cmd.Long = `Assigns a workspace to a metastore.
   
-  Creates an assignment to a metastore for a workspace`
+  Creates an assignment to a metastore for a workspace
+
+  Arguments:
+    WORKSPACE_ID: Workspace ID.
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -74,9 +85,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		_, err = fmt.Sscan(args[0], &createReq.WorkspaceId)
@@ -104,12 +121,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -131,12 +142,16 @@ func newDelete() *cobra.Command {
 	cmd.Long = `Delete a metastore assignment.
   
   Deletes a metastore assignment to a workspace, leaving the workspace with no
-  metastore.`
+  metastore.
+
+  Arguments:
+    WORKSPACE_ID: Workspace ID.
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -170,12 +185,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -199,12 +208,15 @@ func newGet() *cobra.Command {
   Gets the metastore assignment, if any, for the workspace specified by ID. If
   the workspace is assigned a metastore, the mappig will be returned. If no
   metastore is assigned to the workspace, the assignment will not be found and a
-  404 returned.`
+  404 returned.
+
+  Arguments:
+    WORKSPACE_ID: Workspace ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -237,12 +249,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -264,12 +270,15 @@ func newList() *cobra.Command {
 	cmd.Long = `Get all workspaces assigned to a metastore.
   
   Gets a list of all Databricks workspace IDs that have been assigned to given
-  metastore.`
+  metastore.
+
+  Arguments:
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -280,11 +289,8 @@ func newList() *cobra.Command {
 
 		listReq.MetastoreId = args[0]
 
-		response, err := a.MetastoreAssignments.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := a.MetastoreAssignments.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -297,12 +303,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -330,12 +330,16 @@ func newUpdate() *cobra.Command {
 	cmd.Long = `Updates a metastore assignment to a workspaces.
   
   Updates an assignment to a metastore for a workspace. Currently, only the
-  default catalog may be updated.`
+  default catalog may be updated.
+
+  Arguments:
+    WORKSPACE_ID: Workspace ID.
+    METASTORE_ID: Unity Catalog metastore ID`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -345,9 +349,15 @@ func newUpdate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		_, err = fmt.Sscan(args[0], &updateReq.WorkspaceId)
@@ -373,12 +383,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service AccountMetastoreAssignments

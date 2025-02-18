@@ -34,6 +34,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newRead())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -84,19 +91,25 @@ func newCreate() *cobra.Command {
   must have **CREATE EXTERNAL VOLUME** privilege on the external location. -
   There are no other tables, nor volumes existing in the specified storage
   location. - The specified storage location is not under the location of other
-  tables, nor volumes, or catalogs or schemas.`
+  tables, nor volumes, or catalogs or schemas.
+
+  Arguments:
+    CATALOG_NAME: The name of the catalog where the schema and the volume are
+    SCHEMA_NAME: The name of the schema where the volume is
+    NAME: The name of the volume
+    VOLUME_TYPE: `
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'catalog_name', 'schema_name', 'name', 'volume_type' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(4)
+		check := root.ExactArgs(4)
 		return check(cmd, args)
 	}
 
@@ -106,9 +119,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -146,12 +165,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -168,7 +181,7 @@ func newDelete() *cobra.Command {
 
 	// TODO: short flags
 
-	cmd.Use = "delete FULL_NAME_ARG"
+	cmd.Use = "delete NAME"
 	cmd.Short = `Delete a Volume.`
 	cmd.Long = `Delete a Volume.
   
@@ -176,7 +189,10 @@ func newDelete() *cobra.Command {
   
   The caller must be a metastore admin or an owner of the volume. For the latter
   case, the caller must also be the owner or have the **USE_CATALOG** privilege
-  on the parent catalog and the **USE_SCHEMA** privilege on the parent schema.`
+  on the parent catalog and the **USE_SCHEMA** privilege on the parent schema.
+
+  Arguments:
+    NAME: The three-level (fully qualified) name of the volume`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -187,7 +203,7 @@ func newDelete() *cobra.Command {
 
 		if len(args) == 0 {
 			promptSpinner := cmdio.Spinner(ctx)
-			promptSpinner <- "No FULL_NAME_ARG argument specified. Loading names for Volumes drop-down."
+			promptSpinner <- "No NAME argument specified. Loading names for Volumes drop-down."
 			names, err := w.Volumes.VolumeInfoNameToVolumeIdMap(ctx, catalog.ListVolumesRequest{})
 			close(promptSpinner)
 			if err != nil {
@@ -202,7 +218,7 @@ func newDelete() *cobra.Command {
 		if len(args) != 1 {
 			return fmt.Errorf("expected to have the three-level (fully qualified) name of the volume")
 		}
-		deleteReq.FullNameArg = args[0]
+		deleteReq.Name = args[0]
 
 		err = w.Volumes.Delete(ctx, deleteReq)
 		if err != nil {
@@ -223,12 +239,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -245,12 +255,16 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&listReq.IncludeBrowse, "include-browse", listReq.IncludeBrowse, `Whether to include volumes in the response for which the principal can only access selective metadata for.`)
+	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of volumes to return (page length).`)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque token returned by a previous request.`)
+
 	cmd.Use = "list CATALOG_NAME SCHEMA_NAME"
 	cmd.Short = `List Volumes.`
 	cmd.Long = `List Volumes.
   
-  Gets an array of all volumes for the current metastore under the parent
-  catalog and schema.
+  Gets an array of volumes for the current metastore under the parent catalog
+  and schema.
   
   The returned volumes are filtered based on the privileges of the calling user.
   For example, the metastore admin is able to list all the volumes. A regular
@@ -259,15 +273,16 @@ func newList() *cobra.Command {
   also be the owner or have the **USE_CATALOG** privilege on the parent catalog
   and the **USE_SCHEMA** privilege on the parent schema.
   
-  There is no guarantee of a specific ordering of the elements in the array.`
+  There is no guarantee of a specific ordering of the elements in the array.
 
-	// This command is being previewed; hide from help output.
-	cmd.Hidden = true
+  Arguments:
+    CATALOG_NAME: The identifier of the catalog
+    SCHEMA_NAME: The identifier of the schema`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -279,11 +294,8 @@ func newList() *cobra.Command {
 		listReq.CatalogName = args[0]
 		listReq.SchemaName = args[1]
 
-		response, err := w.Volumes.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Volumes.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -296,12 +308,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start read command
@@ -320,7 +326,9 @@ func newRead() *cobra.Command {
 
 	// TODO: short flags
 
-	cmd.Use = "read FULL_NAME_ARG"
+	cmd.Flags().BoolVar(&readReq.IncludeBrowse, "include-browse", readReq.IncludeBrowse, `Whether to include volumes in the response for which the principal can only access selective metadata for.`)
+
+	cmd.Use = "read NAME"
 	cmd.Short = `Get a Volume.`
 	cmd.Long = `Get a Volume.
   
@@ -329,7 +337,10 @@ func newRead() *cobra.Command {
   The caller must be a metastore admin or an owner of (or have the **READ
   VOLUME** privilege on) the volume. For the latter case, the caller must also
   be the owner or have the **USE_CATALOG** privilege on the parent catalog and
-  the **USE_SCHEMA** privilege on the parent schema.`
+  the **USE_SCHEMA** privilege on the parent schema.
+
+  Arguments:
+    NAME: The three-level (fully qualified) name of the volume`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -340,7 +351,7 @@ func newRead() *cobra.Command {
 
 		if len(args) == 0 {
 			promptSpinner := cmdio.Spinner(ctx)
-			promptSpinner <- "No FULL_NAME_ARG argument specified. Loading names for Volumes drop-down."
+			promptSpinner <- "No NAME argument specified. Loading names for Volumes drop-down."
 			names, err := w.Volumes.VolumeInfoNameToVolumeIdMap(ctx, catalog.ListVolumesRequest{})
 			close(promptSpinner)
 			if err != nil {
@@ -355,7 +366,7 @@ func newRead() *cobra.Command {
 		if len(args) != 1 {
 			return fmt.Errorf("expected to have the three-level (fully qualified) name of the volume")
 		}
-		readReq.FullNameArg = args[0]
+		readReq.Name = args[0]
 
 		response, err := w.Volumes.Read(ctx, readReq)
 		if err != nil {
@@ -374,12 +385,6 @@ func newRead() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newRead())
-	})
 }
 
 // start update command
@@ -401,10 +406,10 @@ func newUpdate() *cobra.Command {
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	cmd.Flags().StringVar(&updateReq.Comment, "comment", updateReq.Comment, `The comment attached to the volume.`)
-	cmd.Flags().StringVar(&updateReq.Name, "name", updateReq.Name, `The name of the volume.`)
+	cmd.Flags().StringVar(&updateReq.NewName, "new-name", updateReq.NewName, `New name for the volume.`)
 	cmd.Flags().StringVar(&updateReq.Owner, "owner", updateReq.Owner, `The identifier of the user who owns the volume.`)
 
-	cmd.Use = "update FULL_NAME_ARG"
+	cmd.Use = "update NAME"
 	cmd.Short = `Update a Volume.`
 	cmd.Long = `Update a Volume.
   
@@ -415,7 +420,10 @@ func newUpdate() *cobra.Command {
   on the parent catalog and the **USE_SCHEMA** privilege on the parent schema.
   
   Currently only the name, the owner or the comment of the volume could be
-  updated.`
+  updated.
+
+  Arguments:
+    NAME: The three-level (fully qualified) name of the volume`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -425,14 +433,20 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
 			promptSpinner := cmdio.Spinner(ctx)
-			promptSpinner <- "No FULL_NAME_ARG argument specified. Loading names for Volumes drop-down."
+			promptSpinner <- "No NAME argument specified. Loading names for Volumes drop-down."
 			names, err := w.Volumes.VolumeInfoNameToVolumeIdMap(ctx, catalog.ListVolumesRequest{})
 			close(promptSpinner)
 			if err != nil {
@@ -447,7 +461,7 @@ func newUpdate() *cobra.Command {
 		if len(args) != 1 {
 			return fmt.Errorf("expected to have the three-level (fully qualified) name of the volume")
 		}
-		updateReq.FullNameArg = args[0]
+		updateReq.Name = args[0]
 
 		response, err := w.Volumes.Update(ctx, updateReq)
 		if err != nil {
@@ -466,12 +480,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service Volumes

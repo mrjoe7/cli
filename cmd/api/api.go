@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/databricks/cli/libs/flags"
 	"github.com/databricks/databricks-sdk-go/client"
@@ -35,15 +36,15 @@ func makeCommand(method string) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   strings.ToLower(method),
-		Args:  cobra.ExactArgs(1),
+		Args:  root.ExactArgs(1),
 		Short: fmt.Sprintf("Perform %s request", method),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var path = args[0]
+			path := args[0]
 
 			var request any
-			err := payload.Unmarshal(&request)
-			if err != nil {
-				return err
+			diags := payload.Unmarshal(&request)
+			if diags.HasError() {
+				return diags.Error()
 			}
 
 			cfg := &config.Config{}
@@ -61,7 +62,7 @@ func makeCommand(method string) *cobra.Command {
 
 			var response any
 			headers := map[string]string{"Content-Type": "application/json"}
-			err = api.Do(cmd.Context(), method, path, headers, request, &response)
+			err = api.Do(cmd.Context(), method, path, headers, nil, request, &response)
 			if err != nil {
 				return err
 			}

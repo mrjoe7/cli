@@ -31,6 +31,18 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newExport())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newGetPermissions())
+	cmd.AddCommand(newGetStatus())
+	cmd.AddCommand(newImport())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newMkdirs())
+	cmd.AddCommand(newSetPermissions())
+	cmd.AddCommand(newUpdatePermissions())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -70,9 +82,23 @@ func newDelete() *cobra.Command {
   DIRECTORY_NOT_EMPTY.
   
   Object deletion cannot be undone and deleting a directory recursively is not
-  atomic.`
+  atomic.
+
+  Arguments:
+    PATH: The absolute path of the notebook or directory.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(0)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'path' in your JSON input")
+			}
+			return nil
+		}
+		return nil
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -80,9 +106,15 @@ func newDelete() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteJson.Unmarshal(&deleteReq)
-			if err != nil {
-				return err
+			diags := deleteJson.Unmarshal(&deleteReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			if len(args) == 0 {
@@ -124,12 +156,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start export command
 
 // Slice with functions to override default command behavior.
@@ -146,7 +172,14 @@ func newExport() *cobra.Command {
 
 	// TODO: short flags
 
-	cmd.Flags().Var(&exportReq.Format, "format", `This specifies the format of the exported file.`)
+	cmd.Flags().Var(&exportReq.Format, "format", `This specifies the format of the exported file. Supported values: [
+  AUTO,
+  DBC,
+  HTML,
+  JUPYTER,
+  R_MARKDOWN,
+  SOURCE,
+]`)
 
 	cmd.Use = "export PATH"
 	cmd.Short = `Export a workspace object.`
@@ -159,7 +192,11 @@ func newExport() *cobra.Command {
   
   If the exported data would exceed size limit, this call returns
   MAX_NOTEBOOK_SIZE_EXCEEDED. Currently, this API does not support exporting a
-  library.`
+  library.
+
+  Arguments:
+    PATH: The absolute path of the object or directory. Exporting a directory is
+      only supported for the DBC, SOURCE, and AUTO format.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -206,12 +243,6 @@ func newExport() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newExport())
-	})
-}
-
 // start get-permission-levels command
 
 // Slice with functions to override default command behavior.
@@ -232,12 +263,16 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get workspace object permission levels.`
 	cmd.Long = `Get workspace object permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    WORKSPACE_OBJECT_TYPE: The workspace object type for which to get or manage permissions.
+    WORKSPACE_OBJECT_ID: The workspace object for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -268,12 +303,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start get-permissions command
 
 // Slice with functions to override default command behavior.
@@ -295,12 +324,16 @@ func newGetPermissions() *cobra.Command {
 	cmd.Long = `Get workspace object permissions.
   
   Gets the permissions of a workspace object. Workspace objects can inherit
-  permissions from their parent objects or root object.`
+  permissions from their parent objects or root object.
+
+  Arguments:
+    WORKSPACE_OBJECT_TYPE: The workspace object type for which to get or manage permissions.
+    WORKSPACE_OBJECT_ID: The workspace object for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -331,12 +364,6 @@ func newGetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissions())
-	})
-}
-
 // start get-status command
 
 // Slice with functions to override default command behavior.
@@ -358,12 +385,15 @@ func newGetStatus() *cobra.Command {
 	cmd.Long = `Get status.
   
   Gets the status of an object or a directory. If path does not exist, this
-  call returns an error RESOURCE_DOES_NOT_EXIST.`
+  call returns an error RESOURCE_DOES_NOT_EXIST.
+
+  Arguments:
+    PATH: The absolute path of the notebook or directory.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -393,12 +423,6 @@ func newGetStatus() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetStatus())
-	})
-}
-
 // start import command
 
 // Slice with functions to override default command behavior.
@@ -418,8 +442,16 @@ func newImport() *cobra.Command {
 	cmd.Flags().Var(&importJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	cmd.Flags().StringVar(&importReq.Content, "content", importReq.Content, `The base64-encoded content.`)
-	cmd.Flags().Var(&importReq.Format, "format", `This specifies the format of the file to be imported.`)
-	cmd.Flags().Var(&importReq.Language, "language", `The language of the object.`)
+	cmd.Flags().Var(&importReq.Format, "format", `This specifies the format of the file to be imported. Supported values: [
+  AUTO,
+  DBC,
+  HTML,
+  JUPYTER,
+  RAW,
+  R_MARKDOWN,
+  SOURCE,
+]`)
+	cmd.Flags().Var(&importReq.Language, "language", `The language of the object. Supported values: [PYTHON, R, SCALA, SQL]`)
 	cmd.Flags().BoolVar(&importReq.Overwrite, "overwrite", importReq.Overwrite, `The flag that specifies whether to overwrite existing object.`)
 
 	cmd.Use = "import PATH"
@@ -431,19 +463,23 @@ func newImport() *cobra.Command {
   false, this call returns an error RESOURCE_ALREADY_EXISTS. To import a
   directory, you can use either the DBC format or the SOURCE format with the
   language field unset. To import a single file as SOURCE, you must set the
-  language field.`
+  language field.
+
+  Arguments:
+    PATH: The absolute path of the object or directory. Importing a directory is
+      only supported for the DBC and SOURCE formats.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'path' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -453,9 +489,15 @@ func newImport() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = importJson.Unmarshal(&importReq)
-			if err != nil {
-				return err
+			diags := importJson.Unmarshal(&importReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -479,12 +521,6 @@ func newImport() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newImport())
-	})
 }
 
 // start list command
@@ -511,12 +547,15 @@ func newList() *cobra.Command {
   
   Lists the contents of a directory, or the object if it is not a directory. If
   the input path does not exist, this call returns an error
-  RESOURCE_DOES_NOT_EXIST.`
+  RESOURCE_DOES_NOT_EXIST.
+
+  Arguments:
+    PATH: The absolute path of the notebook or directory.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -527,11 +566,8 @@ func newList() *cobra.Command {
 
 		listReq.Path = args[0]
 
-		response, err := w.Workspace.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Workspace.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -544,12 +580,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start mkdirs command
@@ -579,9 +609,25 @@ func newMkdirs() *cobra.Command {
   path, this call returns an error RESOURCE_ALREADY_EXISTS.
   
   Note that if this operation fails it may have succeeded in creating some of
-  the necessary parent directories.`
+  the necessary parent directories.
+
+  Arguments:
+    PATH: The absolute path of the directory. If the parent directories do not
+      exist, it will also create them. If the directory already exists, this
+      command will do nothing and succeed.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(0)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'path' in your JSON input")
+			}
+			return nil
+		}
+		return nil
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -589,9 +635,15 @@ func newMkdirs() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = mkdirsJson.Unmarshal(&mkdirsReq)
-			if err != nil {
-				return err
+			diags := mkdirsJson.Unmarshal(&mkdirsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			if len(args) == 0 {
@@ -633,12 +685,6 @@ func newMkdirs() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newMkdirs())
-	})
-}
-
 // start set-permissions command
 
 // Slice with functions to override default command behavior.
@@ -663,13 +709,18 @@ func newSetPermissions() *cobra.Command {
 	cmd.Short = `Set workspace object permissions.`
 	cmd.Long = `Set workspace object permissions.
   
-  Sets permissions on a workspace object. Workspace objects can inherit
-  permissions from their parent objects or root object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their parent objects or root object.
+
+  Arguments:
+    WORKSPACE_OBJECT_TYPE: The workspace object type for which to get or manage permissions.
+    WORKSPACE_OBJECT_ID: The workspace object for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -679,9 +730,15 @@ func newSetPermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setPermissionsJson.Unmarshal(&setPermissionsReq)
-			if err != nil {
-				return err
+			diags := setPermissionsJson.Unmarshal(&setPermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		setPermissionsReq.WorkspaceObjectType = args[0]
@@ -704,12 +761,6 @@ func newSetPermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetPermissions())
-	})
 }
 
 // start update-permissions command
@@ -737,12 +788,16 @@ func newUpdatePermissions() *cobra.Command {
 	cmd.Long = `Update workspace object permissions.
   
   Updates the permissions on a workspace object. Workspace objects can inherit
-  permissions from their parent objects or root object.`
+  permissions from their parent objects or root object.
+
+  Arguments:
+    WORKSPACE_OBJECT_TYPE: The workspace object type for which to get or manage permissions.
+    WORKSPACE_OBJECT_ID: The workspace object for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -752,9 +807,15 @@ func newUpdatePermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updatePermissionsJson.Unmarshal(&updatePermissionsReq)
-			if err != nil {
-				return err
+			diags := updatePermissionsJson.Unmarshal(&updatePermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updatePermissionsReq.WorkspaceObjectType = args[0]
@@ -777,12 +838,6 @@ func newUpdatePermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdatePermissions())
-	})
 }
 
 // end service Workspace

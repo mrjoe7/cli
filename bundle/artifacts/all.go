@@ -3,10 +3,10 @@ package artifacts
 import (
 	"context"
 	"fmt"
-
 	"slices"
 
 	"github.com/databricks/cli/bundle"
+	"github.com/databricks/cli/libs/diag"
 	"golang.org/x/exp/maps"
 )
 
@@ -21,7 +21,7 @@ func (m *all) Name() string {
 	return fmt.Sprintf("artifacts.%sAll", m.name)
 }
 
-func (m *all) Apply(ctx context.Context, b *bundle.Bundle) error {
+func (m *all) Apply(ctx context.Context, b *bundle.Bundle) diag.Diagnostics {
 	var out []bundle.Mutator
 
 	// Iterate with stable ordering.
@@ -31,7 +31,7 @@ func (m *all) Apply(ctx context.Context, b *bundle.Bundle) error {
 	for _, name := range keys {
 		m, err := m.fn(name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		if m != nil {
 			out = append(out, m)

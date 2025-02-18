@@ -2,8 +2,8 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/databricks/cli/bundle"
@@ -13,12 +13,12 @@ import (
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/databricks/cli/libs/log"
 	"github.com/databricks/databricks-sdk-go/service/pipelines"
-	flag "github.com/spf13/pflag"
+	"github.com/spf13/cobra"
 )
 
 func filterEventsByUpdateId(events []pipelines.PipelineEvent, updateId string) []pipelines.PipelineEvent {
 	result := []pipelines.PipelineEvent{}
-	for i := 0; i < len(events); i++ {
+	for i := range events {
 		if events[i].Origin.UpdateId == updateId {
 			result = append(result, events[i])
 		}
@@ -33,16 +33,16 @@ func (r *pipelineRunner) logEvent(ctx context.Context, event pipelines.PipelineE
 	}
 	if event.Error != nil && len(event.Error.Exceptions) > 0 {
 		logString += "trace for most recent exception: \n"
-		for i := 0; i < len(event.Error.Exceptions); i++ {
-			logString += fmt.Sprintf("%s\n", event.Error.Exceptions[i].Message)
+		for i := range len(event.Error.Exceptions) {
+			logString += event.Error.Exceptions[i].Message + "\n"
 		}
 	}
 	if logString != "" {
-		log.Errorf(ctx, fmt.Sprintf("[%s] %s", event.EventType, logString))
+		log.Errorf(ctx, "[%s] %s", event.EventType, logString)
 	}
 }
 
-func (r *pipelineRunner) logErrorEvent(ctx context.Context, pipelineId string, updateId string) error {
+func (r *pipelineRunner) logErrorEvent(ctx context.Context, pipelineId, updateId string) error {
 	w := r.bundle.WorkspaceClient()
 
 	// Note: For a 100 percent correct and complete solution we should use the
@@ -54,7 +54,7 @@ func (r *pipelineRunner) logErrorEvent(ctx context.Context, pipelineId string, u
 	// Otherwise for long lived pipelines, there can be a lot of unnecessary
 	// latency due to multiple pagination API calls needed underneath the hood for
 	// ListPipelineEventsAll
-	res, err := w.Pipelines.Impl().ListPipelineEvents(ctx, pipelines.ListPipelineEventsRequest{
+	events, err := w.Pipelines.ListPipelineEventsAll(ctx, pipelines.ListPipelineEventsRequest{
 		Filter:     `level='ERROR'`,
 		MaxResults: 100,
 		PipelineId: pipelineId,
@@ -62,71 +62,13 @@ func (r *pipelineRunner) logErrorEvent(ctx context.Context, pipelineId string, u
 	if err != nil {
 		return err
 	}
-	updateEvents := filterEventsByUpdateId(res.Events, updateId)
+	updateEvents := filterEventsByUpdateId(events, updateId)
 	// The events API returns most recent events first. We iterate in a reverse order
 	// to print the events chronologically
 	for i := len(updateEvents) - 1; i >= 0; i-- {
 		r.logEvent(ctx, updateEvents[i])
 	}
 	return nil
-}
-
-// PipelineOptions defines options for running a pipeline update.
-type PipelineOptions struct {
-	// Perform a full graph update.
-	RefreshAll bool
-
-	// List of tables to update.
-	Refresh []string
-
-	// Perform a full graph reset and recompute.
-	FullRefreshAll bool
-
-	// List of tables to reset and recompute.
-	FullRefresh []string
-}
-
-func (o *PipelineOptions) Define(fs *flag.FlagSet) {
-	fs.BoolVar(&o.RefreshAll, "refresh-all", false, "Perform a full graph update.")
-	fs.StringSliceVar(&o.Refresh, "refresh", nil, "List of tables to update.")
-	fs.BoolVar(&o.FullRefreshAll, "full-refresh-all", false, "Perform a full graph reset and recompute.")
-	fs.StringSliceVar(&o.FullRefresh, "full-refresh", nil, "List of tables to reset and recompute.")
-}
-
-// Validate returns if the combination of options is valid.
-func (o *PipelineOptions) Validate() error {
-	set := []string{}
-	if o.RefreshAll {
-		set = append(set, "--refresh-all")
-	}
-	if len(o.Refresh) > 0 {
-		set = append(set, "--refresh")
-	}
-	if o.FullRefreshAll {
-		set = append(set, "--full-refresh-all")
-	}
-	if len(o.FullRefresh) > 0 {
-		set = append(set, "--full-refresh")
-	}
-	if len(set) > 1 {
-		return fmt.Errorf("pipeline run arguments are mutually exclusive (got %s)", strings.Join(set, ", "))
-	}
-	return nil
-}
-
-func (o *PipelineOptions) toPayload(pipelineID string) (*pipelines.StartUpdate, error) {
-	if err := o.Validate(); err != nil {
-		return nil, err
-	}
-	payload := &pipelines.StartUpdate{
-		PipelineId: pipelineID,
-
-		// Note: `RefreshAll` is implied if the fields below are not set.
-		RefreshSelection:     o.Refresh,
-		FullRefresh:          o.FullRefreshAll,
-		FullRefreshSelection: o.FullRefresh,
-	}
-	return payload, nil
 }
 
 type pipelineRunner struct {
@@ -137,25 +79,20 @@ type pipelineRunner struct {
 }
 
 func (r *pipelineRunner) Name() string {
-	if r.pipeline == nil || r.pipeline.PipelineSpec == nil {
+	if r.pipeline == nil || r.pipeline.CreatePipeline == nil {
 		return ""
 	}
-	return r.pipeline.PipelineSpec.Name
+	return r.pipeline.CreatePipeline.Name
 }
 
 func (r *pipelineRunner) Run(ctx context.Context, opts *Options) (output.RunOutput, error) {
-	var pipelineID = r.pipeline.ID
+	pipelineID := r.pipeline.ID
 
 	// Include resource key in logger.
 	ctx = log.NewContext(ctx, log.GetLogger(ctx).With("resource", r.Key()))
 	w := r.bundle.WorkspaceClient()
-	_, err := w.Pipelines.GetByPipelineId(ctx, pipelineID)
-	if err != nil {
-		log.Warnf(ctx, "Cannot get pipeline: %s", err)
-		return nil, err
-	}
 
-	req, err := opts.Pipeline.toPayload(pipelineID)
+	req, err := opts.Pipeline.toPayload(r.pipeline, pipelineID)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +108,7 @@ func (r *pipelineRunner) Run(ctx context.Context, opts *Options) (output.RunOutp
 	updateTracker := progress.NewUpdateTracker(pipelineID, updateID, w)
 	progressLogger, ok := cmdio.FromContext(ctx)
 	if !ok {
-		return nil, fmt.Errorf("no progress logger found")
+		return nil, errors.New("no progress logger found")
 	}
 
 	// Log the pipeline update URL as soon as it is available.
@@ -191,7 +128,7 @@ func (r *pipelineRunner) Run(ctx context.Context, opts *Options) (output.RunOutp
 		}
 		for _, event := range events {
 			progressLogger.Log(&event)
-			log.Infof(ctx, event.String())
+			log.Info(ctx, event.String())
 		}
 
 		update, err := w.Pipelines.GetUpdateByPipelineIdAndUpdateId(ctx, pipelineID, updateID)
@@ -208,7 +145,7 @@ func (r *pipelineRunner) Run(ctx context.Context, opts *Options) (output.RunOutp
 
 		if state == pipelines.UpdateInfoStateCanceled {
 			log.Infof(ctx, "Update was cancelled!")
-			return nil, fmt.Errorf("update cancelled")
+			return nil, errors.New("update cancelled")
 		}
 		if state == pipelines.UpdateInfoStateFailed {
 			log.Infof(ctx, "Update has failed!")
@@ -216,7 +153,7 @@ func (r *pipelineRunner) Run(ctx context.Context, opts *Options) (output.RunOutp
 			if err != nil {
 				return nil, err
 			}
-			return nil, fmt.Errorf("update failed")
+			return nil, errors.New("update failed")
 		}
 		if state == pipelines.UpdateInfoStateCompleted {
 			log.Infof(ctx, "Update has completed successfully!")
@@ -225,4 +162,42 @@ func (r *pipelineRunner) Run(ctx context.Context, opts *Options) (output.RunOutp
 
 		time.Sleep(time.Second)
 	}
+}
+
+func (r *pipelineRunner) Cancel(ctx context.Context) error {
+	w := r.bundle.WorkspaceClient()
+	wait, err := w.Pipelines.Stop(ctx, pipelines.StopRequest{
+		PipelineId: r.pipeline.ID,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Waits for the Idle state of the pipeline
+	_, err = wait.GetWithTimeout(jobRunTimeout)
+	return err
+}
+
+func (r *pipelineRunner) Restart(ctx context.Context, opts *Options) (output.RunOutput, error) {
+	s := cmdio.Spinner(ctx)
+	s <- "Cancelling the active pipeline update"
+	err := r.Cancel(ctx)
+	close(s)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.Run(ctx, opts)
+}
+
+func (r *pipelineRunner) ParseArgs(args []string, opts *Options) error {
+	if len(args) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("received %d unexpected positional arguments", len(args))
+}
+
+func (r *pipelineRunner) CompleteArgs(args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }

@@ -2,15 +2,17 @@ package testutil
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
-	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // CleanupEnvironment sets up a pristine environment containing only $PATH and $HOME.
 // The original environment is restored upon test completion.
 // Note: use of this function is incompatible with parallel execution.
-func CleanupEnvironment(t *testing.T) {
+func CleanupEnvironment(t TestingT) {
 	// Restore environment when test finishes.
 	environ := os.Environ()
 	t.Cleanup(func() {
@@ -36,11 +38,36 @@ func CleanupEnvironment(t *testing.T) {
 	}
 }
 
-// GetEnvOrSkipTest proceeds with test only with that env variable
-func GetEnvOrSkipTest(t *testing.T, name string) string {
-	value := os.Getenv(name)
-	if value == "" {
-		t.Skipf("Environment variable %s is missing", name)
+// Changes into specified directory for the duration of the test.
+// Returns the current working directory.
+func Chdir(t TestingT, dir string) string {
+	// Prevent parallel execution when changing the working directory.
+	// t.Setenv automatically fails if t.Parallel is set.
+	t.Setenv("DO_NOT_RUN_IN_PARALLEL", "true")
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	if os.Getenv("TESTS_ORIG_WD") == "" {
+		t.Setenv("TESTS_ORIG_WD", wd)
 	}
-	return value
+
+	abs, err := filepath.Abs(dir)
+	require.NoError(t, err)
+
+	err = os.Chdir(abs)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		err := os.Chdir(wd)
+		require.NoError(t, err)
+	})
+
+	return wd
+}
+
+// Return filename ff testutil.Chdir was not called.
+// Return absolute path to filename testutil.Chdir() was called.
+func TestData(filename string) string {
+	// Note, if TESTS_ORIG_WD is not set, Getenv return "" and Join returns filename
+	return filepath.Join(os.Getenv("TESTS_ORIG_WD"), filename)
 }

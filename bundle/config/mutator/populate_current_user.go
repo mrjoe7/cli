@@ -2,11 +2,11 @@ package mutator
 
 import (
 	"context"
-	"strings"
-	"unicode"
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
+	"github.com/databricks/cli/libs/diag"
+	"github.com/databricks/cli/libs/iamutil"
 	"github.com/databricks/cli/libs/tags"
 )
 
@@ -21,7 +21,7 @@ func (m *populateCurrentUser) Name() string {
 	return "PopulateCurrentUser"
 }
 
-func (m *populateCurrentUser) Apply(ctx context.Context, b *bundle.Bundle) error {
+func (m *populateCurrentUser) Apply(ctx context.Context, b *bundle.Bundle) diag.Diagnostics {
 	if b.Config.Workspace.CurrentUser != nil {
 		return nil
 	}
@@ -29,11 +29,11 @@ func (m *populateCurrentUser) Apply(ctx context.Context, b *bundle.Bundle) error
 	w := b.WorkspaceClient()
 	me, err := w.CurrentUser.Me(ctx)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	b.Config.Workspace.CurrentUser = &config.User{
-		ShortName: getShortUserName(me.UserName),
+		ShortName: iamutil.GetShortUserName(me),
 		User:      me,
 	}
 
@@ -41,19 +41,4 @@ func (m *populateCurrentUser) Apply(ctx context.Context, b *bundle.Bundle) error
 	b.Tagging = tags.ForCloud(w.Config)
 
 	return nil
-}
-
-func replaceNonAlphanumeric(r rune) rune {
-	if unicode.IsLetter(r) || unicode.IsDigit(r) {
-		return r
-	}
-	return '_'
-}
-
-// Get a short-form username, based on the user's primary email address.
-// We leave the full range of unicode letters in tact, but remove all "special" characters,
-// including dots, which are not supported in e.g. experiment names.
-func getShortUserName(emailAddress string) string {
-	local, _, _ := strings.Cut(emailAddress, "@")
-	return strings.Map(replaceNonAlphanumeric, local)
 }

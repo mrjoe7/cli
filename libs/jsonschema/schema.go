@@ -3,7 +3,9 @@ package jsonschema
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 
@@ -13,12 +15,20 @@ import (
 
 // defines schema for a json object
 type Schema struct {
+	// Definitions that can be reused and referenced throughout the schema. The
+	// syntax for a reference is $ref: #/$defs/<path.to.definition>
+	Definitions map[string]any `json:"$defs,omitempty"`
+
 	// Type of the object
 	Type Type `json:"type,omitempty"`
 
 	// Description of the object. This is rendered as inline documentation in the
 	// IDE. This is manually injected here using schema.Docs
 	Description string `json:"description,omitempty"`
+
+	// Expected value for the JSON object. The object value must be equal to this
+	// field if it's specified in the schema.
+	Const any `json:"const,omitempty"`
 
 	// Schemas for the fields of an struct. The keys are the first json tag.
 	// The values are the schema for the type of the field
@@ -56,6 +66,20 @@ type Schema struct {
 
 	// Extension embeds our custom JSON schema extensions.
 	Extension
+
+	// Schema that must match any of the schemas in the array
+	AnyOf []Schema `json:"anyOf,omitempty"`
+
+	// Schema that must match one of the schemas in the array
+	OneOf []Schema `json:"oneOf,omitempty"`
+
+	// Title of the object, rendered as inline documentation in the IDE.
+	// https://json-schema.org/understanding-json-schema/reference/annotations
+	Title string `json:"title,omitempty"`
+
+	// Examples of the value for properties in the schema.
+	// https://json-schema.org/understanding-json-schema/reference/annotations
+	Examples any `json:"examples,omitempty"`
 }
 
 // Default value defined in a JSON Schema, represented as a string.
@@ -90,7 +114,7 @@ const (
 func (schema *Schema) validateSchemaPropertyTypes() error {
 	for _, v := range schema.Properties {
 		switch v.Type {
-		case NumberType, BooleanType, StringType, IntegerType:
+		case NumberType, BooleanType, StringType, IntegerType, ObjectType, ArrayType:
 			continue
 		case "int", "int32", "int64":
 			return fmt.Errorf("type %s is not a recognized json schema type. Please use \"integer\" instead", v.Type)
@@ -113,6 +137,18 @@ func (schema *Schema) validateSchemaDefaultValueTypes() error {
 		}
 		if err := validateType(property.Default, property.Type); err != nil {
 			return fmt.Errorf("type validation for default value of property %s failed: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (schema *Schema) validateConstValueTypes() error {
+	for name, property := range schema.Properties {
+		if property.Const == nil {
+			continue
+		}
+		if err := validateType(property.Const, property.Type); err != nil {
+			return fmt.Errorf("type validation for const value of property %s failed: %w", name, err)
 		}
 	}
 	return nil
@@ -203,14 +239,25 @@ func (schema *Schema) validateSchemaMinimumCliVersion(currentVersion string) fun
 	}
 }
 
+func (schema *Schema) validateSchemaSkippedPropertiesHaveDefaults() error {
+	for name, property := range schema.Properties {
+		if property.SkipPromptIf != nil && property.Default == nil {
+			return fmt.Errorf("property %q has a skip_prompt_if clause but no default value", name)
+		}
+	}
+	return nil
+}
+
 func (schema *Schema) validate() error {
 	for _, fn := range []func() error{
 		schema.validateSchemaPropertyTypes,
 		schema.validateSchemaDefaultValueTypes,
 		schema.validateSchemaEnumValueTypes,
+		schema.validateConstValueTypes,
 		schema.validateSchemaDefaultValueIsInEnums,
 		schema.validateSchemaPattern,
 		schema.validateSchemaMinimumCliVersion("v" + build.GetInfo().Version),
+		schema.validateSchemaSkippedPropertiesHaveDefaults,
 	} {
 		err := fn()
 		if err != nil {
@@ -221,7 +268,12 @@ func (schema *Schema) validate() error {
 }
 
 func Load(path string) (*Schema, error) {
-	b, err := os.ReadFile(path)
+	dir, file := filepath.Split(path)
+	return LoadFS(os.DirFS(dir), file)
+}
+
+func LoadFS(fsys fs.FS, path string) (*Schema, error) {
+	b, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +298,12 @@ func Load(path string) (*Schema, error) {
 			property.Default, err = toInteger(property.Default)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse default value for property %s: %w", name, err)
+			}
+		}
+		if property.Const != nil {
+			property.Const, err = toInteger(property.Const)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse const value for property %s: %w", name, err)
 			}
 		}
 		for i, enum := range property.Enum {

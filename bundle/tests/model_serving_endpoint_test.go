@@ -1,7 +1,6 @@
 package config_tests
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/databricks/cli/bundle/config"
@@ -10,7 +9,6 @@ import (
 )
 
 func assertExpected(t *testing.T, p *resources.ModelServingEndpoint) {
-	assert.Equal(t, "model_serving_endpoint/databricks.yml", filepath.ToSlash(p.ConfigFilePath))
 	assert.Equal(t, "model-name", p.Config.ServedModels[0].ModelName)
 	assert.Equal(t, "1", p.Config.ServedModels[0].ModelVersion)
 	assert.Equal(t, "model-name-1", p.Config.TrafficConfig.Routes[0].ServedModelName)
@@ -22,7 +20,7 @@ func assertExpected(t *testing.T, p *resources.ModelServingEndpoint) {
 func TestModelServingEndpointDevelopment(t *testing.T) {
 	b := loadTarget(t, "./model_serving_endpoint", "development")
 	assert.Len(t, b.Config.Resources.ModelServingEndpoints, 1)
-	assert.Equal(t, b.Config.Bundle.Mode, config.Development)
+	assert.Equal(t, config.Development, b.Config.Bundle.Mode)
 
 	p := b.Config.Resources.ModelServingEndpoints["my_model_serving_endpoint"]
 	assert.Equal(t, "my-dev-endpoint", p.Name)

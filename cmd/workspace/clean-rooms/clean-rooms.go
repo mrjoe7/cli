@@ -3,12 +3,10 @@
 package clean_rooms
 
 import (
-	"fmt"
-
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/databricks/cli/libs/flags"
-	"github.com/databricks/databricks-sdk-go/service/sharing"
+	"github.com/databricks/databricks-sdk-go/service/cleanrooms"
 	"github.com/spf13/cobra"
 )
 
@@ -19,21 +17,23 @@ var cmdOverrides []func(*cobra.Command)
 func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clean-rooms",
-		Short: `A clean room is a secure, privacy-protecting environment where two or more parties can share sensitive enterprise data, including customer data, for measurements, insights, activation and other use cases.`,
-		Long: `A clean room is a secure, privacy-protecting environment where two or more
-  parties can share sensitive enterprise data, including customer data, for
-  measurements, insights, activation and other use cases.
-  
-  To create clean rooms, you must be a metastore admin or a user with the
-  **CREATE_CLEAN_ROOM** privilege.`,
-		GroupID: "sharing",
+		Short: `A clean room uses Delta Sharing and serverless compute to provide a secure and privacy-protecting environment where multiple parties can work together on sensitive enterprise data without direct access to each other’s data.`,
+		Long: `A clean room uses Delta Sharing and serverless compute to provide a secure and
+  privacy-protecting environment where multiple parties can work together on
+  sensitive enterprise data without direct access to each other’s data.`,
+		GroupID: "cleanrooms",
 		Annotations: map[string]string{
-			"package": "sharing",
+			"package": "cleanrooms",
 		},
-
-		// This service is being previewed; hide from help output.
-		Hidden: true,
 	}
+
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newCreateOutputCatalog())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -49,28 +49,45 @@ func New() *cobra.Command {
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var createOverrides []func(
 	*cobra.Command,
-	*sharing.CreateCleanRoom,
+	*cleanrooms.CreateCleanRoomRequest,
 )
 
 func newCreate() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var createReq sharing.CreateCleanRoom
+	var createReq cleanrooms.CreateCleanRoomRequest
+	createReq.CleanRoom = &cleanrooms.CleanRoom{}
 	var createJson flags.JsonFlag
 
 	// TODO: short flags
 	cmd.Flags().Var(&createJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Flags().StringVar(&createReq.Comment, "comment", createReq.Comment, `User-provided free-form text description.`)
+	cmd.Flags().StringVar(&createReq.CleanRoom.Comment, "comment", createReq.CleanRoom.Comment, ``)
+	cmd.Flags().StringVar(&createReq.CleanRoom.Name, "name", createReq.CleanRoom.Name, `The name of the clean room.`)
+	// TODO: complex arg: output_catalog
+	cmd.Flags().StringVar(&createReq.CleanRoom.Owner, "owner", createReq.CleanRoom.Owner, `This is Databricks username of the owner of the local clean room securable for permission management.`)
+	// TODO: complex arg: remote_detailed_info
 
 	cmd.Use = "create"
 	cmd.Short = `Create a clean room.`
 	cmd.Long = `Create a clean room.
   
-  Creates a new clean room with specified colaborators. The caller must be a
-  metastore admin or have the **CREATE_CLEAN_ROOM** privilege on the metastore.`
+  Create a new clean room with the specified collaborators. This method is
+  asynchronous; the returned name field inside the clean_room field can be used
+  to poll the clean room status, using the :method:cleanrooms/get method. When
+  this method returns, the clean room will be in a PROVISIONING state, with only
+  name, owner, comment, created_at and status populated. The clean room will be
+  usable once it enters an ACTIVE state.
+  
+  The caller must be a metastore admin or have the **CREATE_CLEAN_ROOM**
+  privilege on the metastore.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(0)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -78,12 +95,16 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq.CleanRoom)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		response, err := w.CleanRooms.Create(ctx, createReq)
@@ -105,39 +126,40 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
-// start delete command
+// start create-output-catalog command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
-var deleteOverrides []func(
+var createOutputCatalogOverrides []func(
 	*cobra.Command,
-	*sharing.DeleteCleanRoomRequest,
+	*cleanrooms.CreateCleanRoomOutputCatalogRequest,
 )
 
-func newDelete() *cobra.Command {
+func newCreateOutputCatalog() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var deleteReq sharing.DeleteCleanRoomRequest
+	var createOutputCatalogReq cleanrooms.CreateCleanRoomOutputCatalogRequest
+	createOutputCatalogReq.OutputCatalog = &cleanrooms.CleanRoomOutputCatalog{}
+	var createOutputCatalogJson flags.JsonFlag
 
 	// TODO: short flags
+	cmd.Flags().Var(&createOutputCatalogJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Use = "delete NAME_ARG"
-	cmd.Short = `Delete a clean room.`
-	cmd.Long = `Delete a clean room.
+	cmd.Flags().StringVar(&createOutputCatalogReq.OutputCatalog.CatalogName, "catalog-name", createOutputCatalogReq.OutputCatalog.CatalogName, `The name of the output catalog in UC.`)
+
+	cmd.Use = "create-output-catalog CLEAN_ROOM_NAME"
+	cmd.Short = `Create an output catalog.`
+	cmd.Long = `Create an output catalog.
   
-  Deletes a data object clean room from the metastore. The caller must be an
-  owner of the clean room.`
+  Create the output catalog of the clean room.
+
+  Arguments:
+    CLEAN_ROOM_NAME: Name of the clean room.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -146,7 +168,80 @@ func newDelete() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		deleteReq.NameArg = args[0]
+		if cmd.Flags().Changed("json") {
+			diags := createOutputCatalogJson.Unmarshal(&createOutputCatalogReq.OutputCatalog)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		createOutputCatalogReq.CleanRoomName = args[0]
+
+		response, err := w.CleanRooms.CreateOutputCatalog(ctx, createOutputCatalogReq)
+		if err != nil {
+			return err
+		}
+		return cmdio.Render(ctx, response)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range createOutputCatalogOverrides {
+		fn(cmd, &createOutputCatalogReq)
+	}
+
+	return cmd
+}
+
+// start delete command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var deleteOverrides []func(
+	*cobra.Command,
+	*cleanrooms.DeleteCleanRoomRequest,
+)
+
+func newDelete() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var deleteReq cleanrooms.DeleteCleanRoomRequest
+
+	// TODO: short flags
+
+	cmd.Use = "delete NAME"
+	cmd.Short = `Delete a clean room.`
+	cmd.Long = `Delete a clean room.
+  
+  Delete a clean room. After deletion, the clean room will be removed from the
+  metastore. If the other collaborators have not deleted the clean room, they
+  will still have the clean room in their metastore, but it will be in a DELETED
+  state and no operations other than deletion can be performed on it.
+
+  Arguments:
+    NAME: Name of the clean room.`
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustWorkspaceClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		w := root.WorkspaceClient(ctx)
+
+		deleteReq.Name = args[0]
 
 		err = w.CleanRooms.Delete(ctx, deleteReq)
 		if err != nil {
@@ -167,41 +262,32 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var getOverrides []func(
 	*cobra.Command,
-	*sharing.GetCleanRoomRequest,
+	*cleanrooms.GetCleanRoomRequest,
 )
 
 func newGet() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var getReq sharing.GetCleanRoomRequest
+	var getReq cleanrooms.GetCleanRoomRequest
 
 	// TODO: short flags
 
-	cmd.Flags().BoolVar(&getReq.IncludeRemoteDetails, "include-remote-details", getReq.IncludeRemoteDetails, `Whether to include remote details (central) on the clean room.`)
-
-	cmd.Use = "get NAME_ARG"
+	cmd.Use = "get NAME"
 	cmd.Short = `Get a clean room.`
 	cmd.Long = `Get a clean room.
   
-  Gets a data object clean room from the metastore. The caller must be a
-  metastore admin or the owner of the clean room.`
+  Get the details of a clean room given its name.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -210,7 +296,7 @@ func newGet() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		getReq.NameArg = args[0]
+		getReq.Name = args[0]
 
 		response, err := w.CleanRooms.Get(ctx, getReq)
 		if err != nil {
@@ -231,43 +317,36 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var listOverrides []func(
 	*cobra.Command,
-	*sharing.ListCleanRoomsRequest,
+	*cleanrooms.ListCleanRoomsRequest,
 )
 
 func newList() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var listReq sharing.ListCleanRoomsRequest
+	var listReq cleanrooms.ListCleanRoomsRequest
 
 	// TODO: short flags
 
-	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of clean rooms to return.`)
-	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Pagination token to go to next page based on previous query.`)
+	cmd.Flags().IntVar(&listReq.PageSize, "page-size", listReq.PageSize, `Maximum number of clean rooms to return (i.e., the page length).`)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque pagination token to go to next page based on previous query.`)
 
 	cmd.Use = "list"
 	cmd.Short = `List clean rooms.`
 	cmd.Long = `List clean rooms.
   
-  Gets an array of data object clean rooms from the metastore. The caller must
-  be a metastore admin or the owner of the clean room. There is no guarantee of
-  a specific ordering of the elements in the array.`
+  Get a list of all clean rooms of the metastore. Only clean rooms the caller
+  has access to are returned.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -276,11 +355,8 @@ func newList() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.CleanRooms.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.CleanRooms.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -295,58 +371,42 @@ func newList() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
-}
-
 // start update command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var updateOverrides []func(
 	*cobra.Command,
-	*sharing.UpdateCleanRoom,
+	*cleanrooms.UpdateCleanRoomRequest,
 )
 
 func newUpdate() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var updateReq sharing.UpdateCleanRoom
+	var updateReq cleanrooms.UpdateCleanRoomRequest
 	var updateJson flags.JsonFlag
 
 	// TODO: short flags
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	// TODO: array: catalog_updates
-	cmd.Flags().StringVar(&updateReq.Comment, "comment", updateReq.Comment, `User-provided free-form text description.`)
-	cmd.Flags().StringVar(&updateReq.Name, "name", updateReq.Name, `Name of the clean room.`)
-	cmd.Flags().StringVar(&updateReq.Owner, "owner", updateReq.Owner, `Username of current owner of clean room.`)
+	// TODO: complex arg: clean_room
 
-	cmd.Use = "update NAME_ARG"
+	cmd.Use = "update NAME"
 	cmd.Short = `Update a clean room.`
 	cmd.Long = `Update a clean room.
   
-  Updates the clean room with the changes and data objects in the request. The
-  caller must be the owner of the clean room or a metastore admin.
+  Update a clean room. The caller must be the owner of the clean room, have
+  **MODIFY_CLEAN_ROOM** privilege, or be metastore admin.
   
   When the caller is a metastore admin, only the __owner__ field can be updated.
-  
-  In the case that the clean room name is changed **updateCleanRoom** requires
-  that the caller is both the clean room owner and a metastore admin.
-  
-  For each table that is added through this method, the clean room owner must
-  also have **SELECT** privilege on the table. The privilege must be maintained
-  indefinitely for recipients to be able to access the table. Typically, you
-  should use a group as the clean room owner.
-  
-  Table removals through **update** do not require additional privileges.`
+
+  Arguments:
+    NAME: Name of the clean room.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -356,12 +416,18 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
-		updateReq.NameArg = args[0]
+		updateReq.Name = args[0]
 
 		response, err := w.CleanRooms.Update(ctx, updateReq)
 		if err != nil {
@@ -380,12 +446,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service CleanRooms

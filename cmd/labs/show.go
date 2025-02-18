@@ -1,9 +1,10 @@
 package labs
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/databricks/cli/cmd/labs/project"
+	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/spf13/cobra"
 )
@@ -11,7 +12,7 @@ import (
 func newShowCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show NAME",
-		Args:  cobra.ExactArgs(1),
+		Args:  root.ExactArgs(1),
 		Short: "Shows information about the project",
 		Annotations: map[string]string{
 			"template": cmdio.Heredoc(`
@@ -33,11 +34,11 @@ func newShowCommand() *cobra.Command {
 				return err
 			}
 			if len(installed) == 0 {
-				return fmt.Errorf("no projects found")
+				return errors.New("no projects found")
 			}
 			name := args[0]
 			for _, v := range installed {
-				isDev := name == "." && v.IsDeveloperMode(ctx)
+				isDev := name == "." && v.IsDeveloperMode()
 				isMatch := name == v.Name
 				if !(isDev || isMatch) {
 					continue
@@ -45,10 +46,10 @@ func newShowCommand() *cobra.Command {
 				return cmdio.Render(ctx, map[string]any{
 					"name":        v.Name,
 					"description": v.Description,
-					"cache_dir":   v.CacheDir(ctx),
-					"config_dir":  v.ConfigDir(ctx),
-					"lib_dir":     v.EffectiveLibDir(ctx),
-					"is_python":   v.IsPythonProject(ctx),
+					"cache_dir":   v.CacheDir(),
+					"config_dir":  v.ConfigDir(),
+					"lib_dir":     v.EffectiveLibDir(),
+					"is_python":   v.IsPythonProject(),
 				})
 			}
 			return nil

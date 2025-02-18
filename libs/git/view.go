@@ -1,9 +1,13 @@
 package git
 
 import (
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/databricks/cli/libs/vfs"
 )
 
 // View represents a view on a directory tree that takes into account
@@ -29,17 +33,15 @@ type View struct {
 
 // Ignore computes whether to ignore the specified path.
 // The specified path is relative to the view's target path.
-func (v *View) Ignore(path string) (bool, error) {
-	path = filepath.ToSlash(path)
-
+func (v *View) Ignore(relPath string) (bool, error) {
 	// Retain trailing slash for directory patterns.
 	// Needs special handling because it is removed by path cleaning.
 	trailingSlash := ""
-	if strings.HasSuffix(path, "/") {
+	if strings.HasSuffix(relPath, "/") {
 		trailingSlash = "/"
 	}
 
-	return v.repo.Ignore(filepath.Join(v.targetPath, path) + trailingSlash)
+	return v.repo.Ignore(path.Join(v.targetPath, relPath) + trailingSlash)
 }
 
 // IgnoreFile returns if the gitignore rules in this fileset
@@ -70,27 +72,32 @@ func (v *View) IgnoreDirectory(dir string) (bool, error) {
 	return v.Ignore(dir + "/")
 }
 
-func NewView(path string) (*View, error) {
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-
-	repo, err := NewRepository(path)
+func NewView(worktreeRoot, root vfs.Path) (*View, error) {
+	repo, err := NewRepository(worktreeRoot)
 	if err != nil {
 		return nil, err
 	}
 
 	// Target path must be relative to the repository root path.
-	targetPath, err := filepath.Rel(repo.rootPath, path)
-	if err != nil {
-		return nil, err
+	target := root.Native()
+	prefix := repo.rootDir.Native()
+	if !strings.HasPrefix(target, prefix) {
+		return nil, fmt.Errorf("path %q is not within repository root %q", root.Native(), prefix)
 	}
+
+	// Make target a relative path.
+	target = strings.TrimPrefix(target, prefix)
+	target = strings.TrimPrefix(target, string(os.PathSeparator))
+	target = path.Clean(filepath.ToSlash(target))
 
 	return &View{
 		repo:       repo,
-		targetPath: targetPath,
+		targetPath: target,
 	}, nil
+}
+
+func NewViewAtRoot(root vfs.Path) (*View, error) {
+	return NewView(root, root)
 }
 
 func (v *View) EnsureValidGitIgnoreExists() error {
@@ -106,7 +113,7 @@ func (v *View) EnsureValidGitIgnoreExists() error {
 
 	// Create .gitignore with .databricks entry
 	gitIgnorePath := filepath.Join(v.repo.Root(), v.targetPath, ".gitignore")
-	file, err := os.OpenFile(gitIgnorePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := os.OpenFile(gitIgnorePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}

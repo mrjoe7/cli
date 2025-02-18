@@ -2,14 +2,15 @@ package sync
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
-
-	"crypto/md5"
-	"encoding/hex"
 
 	"github.com/databricks/cli/libs/fileset"
 	"github.com/databricks/cli/libs/log"
@@ -33,7 +34,7 @@ const LatestSnapshotVersion = "v1"
 type Snapshot struct {
 	// Path where this snapshot was loaded from and will be saved to.
 	// Intentionally not part of the snapshot state because it may be moved by the user.
-	SnapshotPath string `json:"-"`
+	snapshotPath string
 
 	// New indicates if this is a fresh snapshot or if it was loaded from disk.
 	New bool `json:"-"`
@@ -53,6 +54,30 @@ type Snapshot struct {
 
 const syncSnapshotDirName = "sync-snapshots"
 
+func NewSnapshot(localFiles []fileset.File, opts *SyncOptions) (*Snapshot, error) {
+	snapshotPath, err := SnapshotPath(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshotState, err := NewSnapshotState(localFiles)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reset last modified times to make sure all files are synced
+	snapshotState.ResetLastModifiedTimes()
+
+	return &Snapshot{
+		snapshotPath:  snapshotPath,
+		New:           true,
+		Version:       LatestSnapshotVersion,
+		Host:          opts.Host,
+		RemotePath:    opts.RemotePath,
+		SnapshotState: snapshotState,
+	}, nil
+}
+
 func GetFileName(host, remotePath string) string {
 	hash := md5.Sum([]byte(host + remotePath))
 	hashString := hex.EncodeToString(hash[:])
@@ -64,8 +89,8 @@ func GetFileName(host, remotePath string) string {
 // precisely it's the first 16 characters of md5(concat(host, remotePath))
 func SnapshotPath(opts *SyncOptions) (string, error) {
 	snapshotDir := filepath.Join(opts.SnapshotBasePath, syncSnapshotDirName)
-	if _, err := os.Stat(snapshotDir); os.IsNotExist(err) {
-		err = os.MkdirAll(snapshotDir, 0755)
+	if _, err := os.Stat(snapshotDir); errors.Is(err, fs.ErrNotExist) {
+		err = os.MkdirAll(snapshotDir, 0o755)
 		if err != nil {
 			return "", fmt.Errorf("failed to create config directory: %s", err)
 		}
@@ -81,7 +106,7 @@ func newSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error) {
 	}
 
 	return &Snapshot{
-		SnapshotPath: path,
+		snapshotPath: path,
 		New:          true,
 
 		Version:    LatestSnapshotVersion,
@@ -96,7 +121,7 @@ func newSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error) {
 }
 
 func (s *Snapshot) Save(ctx context.Context) error {
-	f, err := os.OpenFile(s.SnapshotPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(s.snapshotPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to create/open persisted sync snapshot file: %s", err)
 	}
@@ -114,14 +139,6 @@ func (s *Snapshot) Save(ctx context.Context) error {
 	return nil
 }
 
-func (s *Snapshot) Destroy(ctx context.Context) error {
-	err := os.Remove(s.SnapshotPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to destroy sync snapshot file: %s", err)
-	}
-	return nil
-}
-
 func loadOrNewSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error) {
 	snapshot, err := newSnapshot(ctx, opts)
 	if err != nil {
@@ -129,11 +146,11 @@ func loadOrNewSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error
 	}
 
 	// Snapshot file not found. We return the new copy.
-	if _, err := os.Stat(snapshot.SnapshotPath); os.IsNotExist(err) {
+	if _, err := os.Stat(snapshot.snapshotPath); errors.Is(err, fs.ErrNotExist) {
 		return snapshot, nil
 	}
 
-	bytes, err := os.ReadFile(snapshot.SnapshotPath)
+	bytes, err := os.ReadFile(snapshot.snapshotPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read sync snapshot from disk: %s", err)
 	}
@@ -156,6 +173,11 @@ func loadOrNewSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error
 		return nil, fmt.Errorf("failed to json unmarshal persisted snapshot: %s", err)
 	}
 
+	// Ensure that all paths are slash-separated upon loading
+	// an existing snapshot file. If it was created by an older
+	// CLI version (<= v0.220.0), it may contain backslashes.
+	snapshot.SnapshotState = snapshot.SnapshotState.ToSlash()
+
 	snapshot.New = false
 	return snapshot, nil
 }
@@ -168,7 +190,7 @@ func (s *Snapshot) diff(ctx context.Context, all []fileset.File) (diff, error) {
 
 	currentState := s.SnapshotState
 	if err := currentState.validate(); err != nil {
-		return diff{}, fmt.Errorf("error parsing existing sync state. Please delete your existing sync snapshot file (%s) and retry: %w", s.SnapshotPath, err)
+		return diff{}, fmt.Errorf("error parsing existing sync state. Please delete your existing sync snapshot file (%s) and retry: %w", s.snapshotPath, err)
 	}
 
 	// Compute diff to apply to get from current state to new target state.

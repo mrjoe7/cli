@@ -38,6 +38,11 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newList())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -66,12 +71,15 @@ func newCreate() *cobra.Command {
 	cmd.Short = `Create service principal secret.`
 	cmd.Long = `Create service principal secret.
   
-  Create a secret for the given service principal.`
+  Create a secret for the given service principal.
+
+  Arguments:
+    SERVICE_PRINCIPAL_ID: The service principal ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -104,12 +112,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -130,12 +132,16 @@ func newDelete() *cobra.Command {
 	cmd.Short = `Delete service principal secret.`
 	cmd.Long = `Delete service principal secret.
   
-  Delete a secret from the given service principal.`
+  Delete a secret from the given service principal.
+
+  Arguments:
+    SERVICE_PRINCIPAL_ID: The service principal ID.
+    SECRET_ID: The secret ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -169,12 +175,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -191,18 +191,23 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `An opaque page token which was the next_page_token in the response of the previous request to list the secrets for this service principal.`)
+
 	cmd.Use = "list SERVICE_PRINCIPAL_ID"
 	cmd.Short = `List service principal secrets.`
 	cmd.Long = `List service principal secrets.
   
   List all secrets associated with the given service principal. This operation
   only returns information about the secrets themselves and does not include the
-  secret values.`
+  secret values.
+
+  Arguments:
+    SERVICE_PRINCIPAL_ID: The service principal ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -216,11 +221,8 @@ func newList() *cobra.Command {
 			return fmt.Errorf("invalid SERVICE_PRINCIPAL_ID: %s", args[0])
 		}
 
-		response, err := a.ServicePrincipalSecrets.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := a.ServicePrincipalSecrets.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -233,12 +235,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service ServicePrincipalSecrets

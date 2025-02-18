@@ -33,6 +33,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetByAlias())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -67,12 +74,16 @@ func newDelete() *cobra.Command {
   The caller must be a metastore admin or an owner of the parent registered
   model. For the latter case, the caller must also be the owner or have the
   **USE_CATALOG** privilege on the parent catalog and the **USE_SCHEMA**
-  privilege on the parent schema.`
+  privilege on the parent schema.
+
+  Arguments:
+    FULL_NAME: The three-level (fully qualified) name of the model version
+    VERSION: The integer version number of the model version`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -106,12 +117,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -128,6 +133,9 @@ func newGet() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&getReq.IncludeAliases, "include-aliases", getReq.IncludeAliases, `Whether to include aliases associated with the model version in the response.`)
+	cmd.Flags().BoolVar(&getReq.IncludeBrowse, "include-browse", getReq.IncludeBrowse, `Whether to include model versions in the response for which the principal can only access selective metadata for.`)
+
 	cmd.Use = "get FULL_NAME VERSION"
 	cmd.Short = `Get a Model Version.`
 	cmd.Long = `Get a Model Version.
@@ -137,12 +145,16 @@ func newGet() *cobra.Command {
   The caller must be a metastore admin or an owner of (or have the **EXECUTE**
   privilege on) the parent registered model. For the latter case, the caller
   must also be the owner or have the **USE_CATALOG** privilege on the parent
-  catalog and the **USE_SCHEMA** privilege on the parent schema.`
+  catalog and the **USE_SCHEMA** privilege on the parent schema.
+
+  Arguments:
+    FULL_NAME: The three-level (fully qualified) name of the model version
+    VERSION: The integer version number of the model version`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -176,12 +188,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start get-by-alias command
 
 // Slice with functions to override default command behavior.
@@ -198,6 +204,8 @@ func newGetByAlias() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&getByAliasReq.IncludeAliases, "include-aliases", getByAliasReq.IncludeAliases, `Whether to include aliases associated with the model version in the response.`)
+
 	cmd.Use = "get-by-alias FULL_NAME ALIAS"
 	cmd.Short = `Get Model Version By Alias.`
 	cmd.Long = `Get Model Version By Alias.
@@ -207,12 +215,16 @@ func newGetByAlias() *cobra.Command {
   The caller must be a metastore admin or an owner of (or have the **EXECUTE**
   privilege on) the registered model. For the latter case, the caller must also
   be the owner or have the **USE_CATALOG** privilege on the parent catalog and
-  the **USE_SCHEMA** privilege on the parent schema.`
+  the **USE_SCHEMA** privilege on the parent schema.
+
+  Arguments:
+    FULL_NAME: The three-level (fully qualified) name of the registered model
+    ALIAS: The name of the alias`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -243,12 +255,6 @@ func newGetByAlias() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetByAlias())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -265,8 +271,9 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
-	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Max number of model versions to return.`)
-	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque token to send for the next page of results (pagination).`)
+	cmd.Flags().BoolVar(&listReq.IncludeBrowse, "include-browse", listReq.IncludeBrowse, `Whether to include model versions in the response for which the principal can only access selective metadata for.`)
+	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of model versions to return.`)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque pagination token to go to next page based on previous query.`)
 
 	cmd.Use = "list FULL_NAME"
 	cmd.Short = `List Model Versions.`
@@ -283,12 +290,17 @@ func newList() *cobra.Command {
   privilege on the parent catalog and the **USE_SCHEMA** privilege on the parent
   schema.
   
-  There is no guarantee of a specific ordering of the elements in the response.`
+  There is no guarantee of a specific ordering of the elements in the response.
+  The elements in the response will not contain any aliases or tags.
+
+  Arguments:
+    FULL_NAME: The full three-level name of the registered model under which to list
+      model versions`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -299,11 +311,8 @@ func newList() *cobra.Command {
 
 		listReq.FullName = args[0]
 
-		response, err := w.ModelVersions.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.ModelVersions.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -316,12 +325,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -355,12 +358,16 @@ func newUpdate() *cobra.Command {
   **USE_CATALOG** privilege on the parent catalog and the **USE_SCHEMA**
   privilege on the parent schema.
   
-  Currently only the comment of the model version can be updated.`
+  Currently only the comment of the model version can be updated.
+
+  Arguments:
+    FULL_NAME: The three-level (fully qualified) name of the model version
+    VERSION: The integer version number of the model version`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -370,9 +377,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.FullName = args[0]
@@ -398,12 +411,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service ModelVersions

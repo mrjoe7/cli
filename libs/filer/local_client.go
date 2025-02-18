@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -27,6 +28,15 @@ func (w *LocalClient) Write(ctx context.Context, name string, reader io.Reader, 
 		return err
 	}
 
+	// Retrieve permission mask from the [WriteMode], if present.
+	perm := fs.FileMode(0o644)
+	for _, m := range mode {
+		bits := m & writeModePerm
+		if bits != 0 {
+			perm = fs.FileMode(bits)
+		}
+	}
+
 	flags := os.O_WRONLY | os.O_CREATE
 	if slices.Contains(mode, OverwriteIfExists) {
 		flags |= os.O_TRUNC
@@ -34,23 +44,22 @@ func (w *LocalClient) Write(ctx context.Context, name string, reader io.Reader, 
 		flags |= os.O_EXCL
 	}
 
-	absPath = filepath.FromSlash(absPath)
-	f, err := os.OpenFile(absPath, flags, 0644)
-	if os.IsNotExist(err) && slices.Contains(mode, CreateParentDirectories) {
+	f, err := os.OpenFile(absPath, flags, perm)
+	if errors.Is(err, fs.ErrNotExist) && slices.Contains(mode, CreateParentDirectories) {
 		// Create parent directories if they don't exist.
-		err = os.MkdirAll(filepath.Dir(absPath), 0755)
+		err = os.MkdirAll(filepath.Dir(absPath), 0o755)
 		if err != nil {
 			return err
 		}
 		// Try again.
-		f, err = os.OpenFile(absPath, flags, 0644)
+		f, err = os.OpenFile(absPath, flags, perm)
 	}
 
 	if err != nil {
 		switch {
-		case os.IsNotExist(err):
+		case errors.Is(err, fs.ErrNotExist):
 			return NoSuchDirectoryError{path: absPath}
-		case os.IsExist(err):
+		case errors.Is(err, fs.ErrExist):
 			return FileAlreadyExistsError{path: absPath}
 		default:
 			return err
@@ -64,7 +73,6 @@ func (w *LocalClient) Write(ctx context.Context, name string, reader io.Reader, 
 	}
 
 	return err
-
 }
 
 func (w *LocalClient) Read(ctx context.Context, name string) (io.ReadCloser, error) {
@@ -76,10 +84,9 @@ func (w *LocalClient) Read(ctx context.Context, name string) (io.ReadCloser, err
 	// This stat call serves two purposes:
 	// 1. Checks file at path exists, and throws an error if it does not
 	// 2. Allows us to error out if the path is a directory
-	absPath = filepath.FromSlash(absPath)
 	stat, err := os.Stat(absPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, FileDoesNotExistError{path: absPath}
 		}
 		return nil, err
@@ -103,7 +110,6 @@ func (w *LocalClient) Delete(ctx context.Context, name string, mode ...DeleteMod
 		return CannotDeleteRootError{}
 	}
 
-	absPath = filepath.FromSlash(absPath)
 	err = os.Remove(absPath)
 
 	// Return early on success.
@@ -111,11 +117,11 @@ func (w *LocalClient) Delete(ctx context.Context, name string, mode ...DeleteMod
 		return nil
 	}
 
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return FileDoesNotExistError{path: absPath}
 	}
 
-	if os.IsExist(err) {
+	if errors.Is(err, fs.ErrExist) {
 		if slices.Contains(mode, DeleteRecursively) {
 			return os.RemoveAll(absPath)
 		}
@@ -131,10 +137,9 @@ func (w *LocalClient) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, 
 		return nil, err
 	}
 
-	absPath = filepath.FromSlash(absPath)
 	stat, err := os.Stat(absPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, NoSuchDirectoryError{path: absPath}
 		}
 		return nil, err
@@ -153,8 +158,7 @@ func (w *LocalClient) Mkdir(ctx context.Context, name string) error {
 		return err
 	}
 
-	dirPath = filepath.FromSlash(dirPath)
-	return os.MkdirAll(dirPath, 0755)
+	return os.MkdirAll(dirPath, 0o755)
 }
 
 func (w *LocalClient) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
@@ -163,9 +167,8 @@ func (w *LocalClient) Stat(ctx context.Context, name string) (fs.FileInfo, error
 		return nil, err
 	}
 
-	absPath = filepath.FromSlash(absPath)
 	stat, err := os.Stat(absPath)
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, FileDoesNotExistError{path: absPath}
 	}
 	return stat, err

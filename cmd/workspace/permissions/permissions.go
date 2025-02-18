@@ -21,6 +21,9 @@ func New() *cobra.Command {
 		Long: `Permissions API are used to create read, write, edit, update and manage access
   for various users on different objects and endpoints.
   
+  * **[Apps permissions](:service:apps)** — Manage which users can manage or
+  use apps.
+  
   * **[Cluster permissions](:service:clusters)** — Manage which users can
   manage, restart, or attach to clusters.
   
@@ -59,10 +62,14 @@ func New() *cobra.Command {
   create or use tokens.
   
   * **[Workspace object permissions](:service:workspace)** — Manage which
-  users can read, run, edit, or manage directories, files, and notebooks.
+  users can read, run, edit, or manage alerts, dbsql-dashboards, directories,
+  files, notebooks and queries.
   
   For the mapping of the required permissions for specific actions or abilities
   and other important information, see [Access Control].
+  
+  Note that to manage access control on service principals, use **[Account
+  Access Control Proxy](:service:accountaccesscontrolproxy)**.
   
   [Access Control]: https://docs.databricks.com/security/auth-authz/access-control/index.html`,
 		GroupID: "iam",
@@ -70,6 +77,12 @@ func New() *cobra.Command {
 			"package": "iam",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newSet())
+	cmd.AddCommand(newUpdate())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -100,12 +113,20 @@ func newGet() *cobra.Command {
 	cmd.Long = `Get object permissions.
   
   Gets the permissions of an object. Objects can inherit permissions from their
-  parent objects or root object.`
+  parent objects or root object.
+
+  Arguments:
+    REQUEST_OBJECT_TYPE: The type of the request object. Can be one of the following: alerts,
+      authorization, clusters, cluster-policies, dashboards, dbsql-dashboards,
+      directories, experiments, files, instance-pools, jobs, notebooks,
+      pipelines, queries, registered-models, repos, serving-endpoints, or
+      warehouses.
+    REQUEST_OBJECT_ID: The id of the request object.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -136,12 +157,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start get-permission-levels command
 
 // Slice with functions to override default command behavior.
@@ -162,12 +177,16 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get object permission levels.`
 	cmd.Long = `Get object permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    REQUEST_OBJECT_TYPE: <needs content>
+    REQUEST_OBJECT_ID: <needs content>`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -198,12 +217,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start set command
 
 // Slice with functions to override default command behavior.
@@ -228,13 +241,22 @@ func newSet() *cobra.Command {
 	cmd.Short = `Set object permissions.`
 	cmd.Long = `Set object permissions.
   
-  Sets permissions on an object. Objects can inherit permissions from their
-  parent objects or root object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their parent objects or root object.
+
+  Arguments:
+    REQUEST_OBJECT_TYPE: The type of the request object. Can be one of the following: alerts,
+      authorization, clusters, cluster-policies, dashboards, dbsql-dashboards,
+      directories, experiments, files, instance-pools, jobs, notebooks,
+      pipelines, queries, registered-models, repos, serving-endpoints, or
+      warehouses.
+    REQUEST_OBJECT_ID: The id of the request object.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -244,9 +266,15 @@ func newSet() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setJson.Unmarshal(&setReq)
-			if err != nil {
-				return err
+			diags := setJson.Unmarshal(&setReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		setReq.RequestObjectType = args[0]
@@ -269,12 +297,6 @@ func newSet() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSet())
-	})
 }
 
 // start update command
@@ -302,12 +324,20 @@ func newUpdate() *cobra.Command {
 	cmd.Long = `Update object permissions.
   
   Updates the permissions on an object. Objects can inherit permissions from
-  their parent objects or root object.`
+  their parent objects or root object.
+
+  Arguments:
+    REQUEST_OBJECT_TYPE: The type of the request object. Can be one of the following: alerts,
+      authorization, clusters, cluster-policies, dashboards, dbsql-dashboards,
+      directories, experiments, files, instance-pools, jobs, notebooks,
+      pipelines, queries, registered-models, repos, serving-endpoints, or
+      warehouses.
+    REQUEST_OBJECT_ID: The id of the request object.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -317,9 +347,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.RequestObjectType = args[0]
@@ -342,12 +378,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service Permissions

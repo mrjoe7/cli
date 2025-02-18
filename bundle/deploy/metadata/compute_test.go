@@ -6,9 +6,10 @@ import (
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
-	"github.com/databricks/cli/bundle/config/paths"
 	"github.com/databricks/cli/bundle/config/resources"
+	"github.com/databricks/cli/bundle/internal/bundletest"
 	"github.com/databricks/cli/bundle/metadata"
+	"github.com/databricks/cli/libs/dyn"
 	"github.com/databricks/databricks-sdk-go/service/jobs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,18 +36,12 @@ func TestComputeMetadataMutator(t *testing.T) {
 			Resources: config.Resources{
 				Jobs: map[string]*resources.Job{
 					"my-job-1": {
-						Paths: paths.Paths{
-							ConfigFilePath: "a/b/c",
-						},
 						ID: "1111",
 						JobSettings: &jobs.JobSettings{
 							Name: "My Job One",
 						},
 					},
 					"my-job-2": {
-						Paths: paths.Paths{
-							ConfigFilePath: "d/e/f",
-						},
 						ID: "2222",
 						JobSettings: &jobs.JobSettings{
 							Name: "My Job Two",
@@ -54,15 +49,15 @@ func TestComputeMetadataMutator(t *testing.T) {
 					},
 				},
 				Pipelines: map[string]*resources.Pipeline{
-					"my-pipeline": {
-						Paths: paths.Paths{
-							ConfigFilePath: "abc",
-						},
-					},
+					"my-pipeline": {},
 				},
 			},
 		},
 	}
+
+	bundletest.SetLocation(b, "resources.jobs.my-job-1", []dyn.Location{{File: "a/b/c"}})
+	bundletest.SetLocation(b, "resources.jobs.my-job-2", []dyn.Location{{File: "d/e/f"}})
+	bundletest.SetLocation(b, "resources.pipelines.my-pipeline", []dyn.Location{{File: "abc"}})
 
 	expectedMetadata := metadata.Metadata{
 		Version: metadata.Version,
@@ -93,8 +88,29 @@ func TestComputeMetadataMutator(t *testing.T) {
 		},
 	}
 
-	err := bundle.Apply(context.Background(), b, Compute())
-	require.NoError(t, err)
+	diags := bundle.Apply(context.Background(), b, Compute())
+	require.NoError(t, diags.Error())
 
 	assert.Equal(t, expectedMetadata, b.Metadata)
+}
+
+func TestComputeMetadataMutatorSourceLinked(t *testing.T) {
+	syncRootPath := "/Users/shreyas.goenka@databricks.com/source"
+	enabled := true
+	b := &bundle.Bundle{
+		SyncRootPath: syncRootPath,
+		Config: config.Root{
+			Presets: config.Presets{
+				SourceLinkedDeployment: &enabled,
+			},
+			Workspace: config.Workspace{
+				FilePath: "/Users/shreyas.goenka@databricks.com/files",
+			},
+		},
+	}
+
+	diags := bundle.Apply(context.Background(), b, Compute())
+	require.NoError(t, diags.Error())
+
+	assert.Equal(t, syncRootPath, b.Metadata.Config.Workspace.FilePath)
 }

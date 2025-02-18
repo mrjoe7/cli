@@ -1,6 +1,7 @@
 package configure
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/databricks/cli/libs/cmdio"
@@ -42,11 +43,15 @@ func configureInteractive(cmd *cobra.Command, flags *configureFlags, cfg *config
 
 	// Ask user to specify a cluster if not already set.
 	if flags.ConfigureCluster && cfg.ClusterID == "" {
-		w, err := databricks.NewWorkspaceClient((*databricks.Config)(cfg))
+		// Create workspace client with configuration without the profile name set.
+		w, err := databricks.NewWorkspaceClient(&databricks.Config{
+			Host:  cfg.Host,
+			Token: cfg.Token,
+		})
 		if err != nil {
 			return err
 		}
-		clusterID, err := cfgpickers.AskForCluster(cmd.Context(), w)
+		clusterID, err := cfgpickers.AskForCluster(cmd.Context(), w, cfgpickers.WithoutSystemClusters())
 		if err != nil {
 			return err
 		}
@@ -58,12 +63,12 @@ func configureInteractive(cmd *cobra.Command, flags *configureFlags, cfg *config
 
 func configureNonInteractive(cmd *cobra.Command, flags *configureFlags, cfg *config.Config) error {
 	if cfg.Host == "" {
-		return fmt.Errorf("host must be set in non-interactive mode")
+		return errors.New("host must be set in non-interactive mode")
 	}
 
 	// Check presence of cluster ID before reading token to fail fast.
 	if flags.ConfigureCluster && cfg.ClusterID == "" {
-		return fmt.Errorf("cluster ID must be set in non-interactive mode")
+		return errors.New("cluster ID must be set in non-interactive mode")
 	}
 
 	// Read token from stdin if not already set.
@@ -135,10 +140,11 @@ The host must be specified with the --host flag or the DATABRICKS_HOST environme
 
 		// Save profile to config file.
 		return databrickscfg.SaveToProfile(ctx, &config.Config{
-			Profile:   cfg.Profile,
-			Host:      cfg.Host,
-			Token:     cfg.Token,
-			ClusterID: cfg.ClusterID,
+			Profile:    cfg.Profile,
+			Host:       cfg.Host,
+			Token:      cfg.Token,
+			ClusterID:  cfg.ClusterID,
+			ConfigFile: cfg.ConfigFile,
 		})
 	}
 

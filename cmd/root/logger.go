@@ -3,7 +3,6 @@ package root
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 
@@ -11,7 +10,7 @@ import (
 	"github.com/databricks/cli/libs/env"
 	"github.com/databricks/cli/libs/flags"
 	"github.com/databricks/cli/libs/log"
-	"github.com/fatih/color"
+	"github.com/databricks/cli/libs/log/handler"
 	"github.com/spf13/cobra"
 )
 
@@ -20,54 +19,6 @@ const (
 	envLogLevel  = "DATABRICKS_LOG_LEVEL"
 	envLogFormat = "DATABRICKS_LOG_FORMAT"
 )
-
-type friendlyHandler struct {
-	slog.Handler
-	w io.Writer
-}
-
-var (
-	levelTrace = color.New(color.FgYellow).Sprint("TRACE")
-	levelDebug = color.New(color.FgYellow).Sprint("DEBUG")
-	levelInfo  = color.New(color.FgGreen).Sprintf("%5s", "INFO")
-	levelWarn  = color.New(color.FgMagenta).Sprintf("%5s", "WARN")
-	levelError = color.New(color.FgRed).Sprint("ERROR")
-)
-
-func (l *friendlyHandler) coloredLevel(rec slog.Record) string {
-	switch rec.Level {
-	case log.LevelTrace:
-		return levelTrace
-	case slog.LevelDebug:
-		return levelDebug
-	case slog.LevelInfo:
-		return levelInfo
-	case slog.LevelWarn:
-		return levelWarn
-	case log.LevelError:
-		return levelError
-	}
-	return ""
-}
-
-func (l *friendlyHandler) Handle(ctx context.Context, rec slog.Record) error {
-	t := fmt.Sprintf("%02d:%02d", rec.Time.Hour(), rec.Time.Minute())
-	attrs := ""
-	rec.Attrs(func(a slog.Attr) bool {
-		attrs += fmt.Sprintf(" %s%s%s",
-			color.CyanString(a.Key),
-			color.CyanString("="),
-			color.YellowString(a.Value.String()))
-		return true
-	})
-	msg := fmt.Sprintf("%s %s %s%s\n",
-		color.MagentaString(t),
-		l.coloredLevel(rec),
-		rec.Message,
-		attrs)
-	_, err := l.w.Write([]byte(msg))
-	return err
-}
 
 type logFlags struct {
 	file   flags.LogFileFlag
@@ -82,14 +33,11 @@ func (f *logFlags) makeLogHandler(opts slog.HandlerOptions) (slog.Handler, error
 		return slog.NewJSONHandler(f.file.Writer(), &opts), nil
 	case flags.OutputText:
 		w := f.file.Writer()
-		if cmdio.IsTTY(w) {
-			return &friendlyHandler{
-				Handler: slog.NewTextHandler(w, &opts),
-				w:       w,
-			}, nil
-		}
-		return slog.NewTextHandler(w, &opts), nil
-
+		return handler.NewFriendlyHandler(w, &handler.Options{
+			Color:       cmdio.IsTTY(w),
+			Level:       opts.Level,
+			ReplaceAttr: opts.ReplaceAttr,
+		}), nil
 	default:
 		return nil, fmt.Errorf("invalid log output mode: %s", f.output)
 	}
@@ -97,7 +45,10 @@ func (f *logFlags) makeLogHandler(opts slog.HandlerOptions) (slog.Handler, error
 
 func (f *logFlags) initializeContext(ctx context.Context) (context.Context, error) {
 	if f.debug {
-		f.level.Set("debug")
+		err := f.level.Set("debug")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	opts := slog.HandlerOptions{}
@@ -133,13 +84,13 @@ func initLogFlags(cmd *cobra.Command) *logFlags {
 	// Configure defaults from environment, if applicable.
 	// If the provided value is invalid it is ignored.
 	if v, ok := env.Lookup(cmd.Context(), envLogFile); ok {
-		f.file.Set(v)
+		f.file.Set(v) //nolint:errcheck
 	}
 	if v, ok := env.Lookup(cmd.Context(), envLogLevel); ok {
-		f.level.Set(v)
+		f.level.Set(v) //nolint:errcheck
 	}
 	if v, ok := env.Lookup(cmd.Context(), envLogFormat); ok {
-		f.output.Set(v)
+		f.output.Set(v) //nolint:errcheck
 	}
 
 	flags := cmd.PersistentFlags()

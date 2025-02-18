@@ -1,9 +1,5 @@
 package testutil
 
-import (
-	"testing"
-)
-
 type Cloud int
 
 const (
@@ -13,7 +9,7 @@ const (
 )
 
 // Implement [Requirement].
-func (c Cloud) Verify(t *testing.T) {
+func (c Cloud) Verify(t TestingT) {
 	if c != GetCloud(t) {
 		t.Skipf("Skipping %s-specific test", c)
 	}
@@ -32,7 +28,20 @@ func (c Cloud) String() string {
 	}
 }
 
-func GetCloud(t *testing.T) Cloud {
+func (c Cloud) NodeTypeID() string {
+	switch c {
+	case AWS:
+		return "i3.xlarge"
+	case Azure:
+		return "Standard_DS4_v2"
+	case GCP:
+		return "n1-standard-4"
+	default:
+		return "unknown"
+	}
+}
+
+func GetCloud(t TestingT) Cloud {
 	env := GetEnvOrSkipTest(t, "CLOUD_ENV")
 	switch env {
 	case "aws":
@@ -41,6 +50,9 @@ func GetCloud(t *testing.T) Cloud {
 		return Azure
 	case "gcp":
 		return GCP
+	// CLOUD_ENV is set to "ucws" in the "aws-prod-ucws" test environment
+	case "ucws":
+		return AWS
 	default:
 		t.Fatalf("Unknown cloud environment: %s", env)
 	}

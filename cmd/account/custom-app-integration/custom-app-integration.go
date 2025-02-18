@@ -3,8 +3,6 @@
 package custom_app_integration
 
 import (
-	"fmt"
-
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/databricks/cli/libs/flags"
@@ -19,8 +17,8 @@ var cmdOverrides []func(*cobra.Command)
 func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "custom-app-integration",
-		Short: `These APIs enable administrators to manage custom oauth app integrations, which is required for adding/using Custom OAuth App Integration like Tableau Cloud for Databricks in AWS cloud.`,
-		Long: `These APIs enable administrators to manage custom oauth app integrations,
+		Short: `These APIs enable administrators to manage custom OAuth app integrations, which is required for adding/using Custom OAuth App Integration like Tableau Cloud for Databricks in AWS cloud.`,
+		Long: `These APIs enable administrators to manage custom OAuth app integrations,
   which is required for adding/using Custom OAuth App Integration like Tableau
   Cloud for Databricks in AWS cloud.`,
 		GroupID: "oauth2",
@@ -28,6 +26,13 @@ func New() *cobra.Command {
 			"package": "oauth2",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -55,9 +60,12 @@ func newCreate() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&createJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Flags().BoolVar(&createReq.Confidential, "confidential", createReq.Confidential, `indicates if an oauth client-secret should be generated.`)
+	cmd.Flags().BoolVar(&createReq.Confidential, "confidential", createReq.Confidential, `This field indicates whether an OAuth client secret is required to authenticate this client.`)
+	cmd.Flags().StringVar(&createReq.Name, "name", createReq.Name, `Name of the custom OAuth app.`)
+	// TODO: array: redirect_urls
 	// TODO: array: scopes
 	// TODO: complex arg: token_access_policy
+	// TODO: array: user_authorized_scopes
 
 	cmd.Use = "create"
 	cmd.Short = `Create Custom OAuth App Integration.`
@@ -65,10 +73,15 @@ func newCreate() *cobra.Command {
   
   Create Custom OAuth App Integration.
   
-  You can retrieve the custom oauth app integration via
+  You can retrieve the custom OAuth app integration via
   :method:CustomAppIntegration/get.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(0)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustAccountClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -76,12 +89,16 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		response, err := a.CustomAppIntegration.Create(ctx, createReq)
@@ -101,12 +118,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -130,12 +141,12 @@ func newDelete() *cobra.Command {
 	cmd.Long = `Delete Custom OAuth App Integration.
   
   Delete an existing Custom OAuth App Integration. You can retrieve the custom
-  oauth app integration via :method:CustomAppIntegration/get.`
+  OAuth app integration via :method:CustomAppIntegration/get.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -165,12 +176,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -191,12 +196,15 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get OAuth Custom App Integration.`
 	cmd.Long = `Get OAuth Custom App Integration.
   
-  Gets the Custom OAuth App Integration for the given integration id.`
+  Gets the Custom OAuth App Integration for the given integration id.
+
+  Arguments:
+    INTEGRATION_ID: The OAuth app integration ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -226,41 +234,47 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var listOverrides []func(
 	*cobra.Command,
+	*oauth2.ListCustomAppIntegrationsRequest,
 )
 
 func newList() *cobra.Command {
 	cmd := &cobra.Command{}
 
+	var listReq oauth2.ListCustomAppIntegrationsRequest
+
+	// TODO: short flags
+
+	cmd.Flags().BoolVar(&listReq.IncludeCreatorUsername, "include-creator-username", listReq.IncludeCreatorUsername, ``)
+	cmd.Flags().IntVar(&listReq.PageSize, "page-size", listReq.PageSize, ``)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, ``)
+
 	cmd.Use = "list"
 	cmd.Short = `Get custom oauth app integrations.`
 	cmd.Long = `Get custom oauth app integrations.
   
-  Get the list of custom oauth app integrations for the specified Databricks
+  Get the list of custom OAuth app integrations for the specified Databricks
   account`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(0)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustAccountClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		a := root.AccountClient(ctx)
-		response, err := a.CustomAppIntegration.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+
+		response := a.CustomAppIntegration.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -269,16 +283,10 @@ func newList() *cobra.Command {
 
 	// Apply optional overrides to this command.
 	for _, fn := range listOverrides {
-		fn(cmd)
+		fn(cmd, &listReq)
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -300,19 +308,21 @@ func newUpdate() *cobra.Command {
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	// TODO: array: redirect_urls
+	// TODO: array: scopes
 	// TODO: complex arg: token_access_policy
+	// TODO: array: user_authorized_scopes
 
 	cmd.Use = "update INTEGRATION_ID"
 	cmd.Short = `Updates Custom OAuth App Integration.`
 	cmd.Long = `Updates Custom OAuth App Integration.
   
   Updates an existing custom OAuth App Integration. You can retrieve the custom
-  oauth app integration via :method:CustomAppIntegration/get.`
+  OAuth app integration via :method:CustomAppIntegration/get.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -322,9 +332,15 @@ func newUpdate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.IntegrationId = args[0]
@@ -346,12 +362,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service CustomAppIntegration

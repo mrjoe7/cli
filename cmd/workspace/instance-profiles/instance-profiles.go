@@ -32,6 +32,12 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newAdd())
+	cmd.AddCommand(newEdit())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newRemove())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -67,19 +73,23 @@ func newAdd() *cobra.Command {
 	cmd.Long = `Register an instance profile.
   
   In the UI, you can select the instance profile when launching clusters. This
-  API is only available to admin users.`
+  API is only available to admin users.
+
+  Arguments:
+    INSTANCE_PROFILE_ARN: The AWS ARN of the instance profile to register with Databricks. This
+      field is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'instance_profile_arn' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -89,9 +99,15 @@ func newAdd() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = addJson.Unmarshal(&addReq)
-			if err != nil {
-				return err
+			diags := addJson.Unmarshal(&addReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -115,12 +131,6 @@ func newAdd() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newAdd())
-	})
 }
 
 // start edit command
@@ -162,19 +172,23 @@ func newEdit() *cobra.Command {
   This API is only available to admin users.
   
   [Databricks SQL Serverless]: https://docs.databricks.com/sql/admin/serverless.html
-  [Enable serverless SQL warehouses]: https://docs.databricks.com/sql/admin/serverless.html`
+  [Enable serverless SQL warehouses]: https://docs.databricks.com/sql/admin/serverless.html
+
+  Arguments:
+    INSTANCE_PROFILE_ARN: The AWS ARN of the instance profile to register with Databricks. This
+      field is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'instance_profile_arn' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -184,9 +198,15 @@ func newEdit() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = editJson.Unmarshal(&editReq)
-			if err != nil {
-				return err
+			diags := editJson.Unmarshal(&editReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -210,12 +230,6 @@ func newEdit() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newEdit())
-	})
 }
 
 // start list command
@@ -243,11 +257,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.InstanceProfiles.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.InstanceProfiles.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -260,12 +271,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start remove command
@@ -293,19 +298,22 @@ func newRemove() *cobra.Command {
   Remove the instance profile with the provided ARN. Existing clusters with this
   instance profile will continue to function.
   
-  This API is only accessible to admin users.`
+  This API is only accessible to admin users.
+
+  Arguments:
+    INSTANCE_PROFILE_ARN: The ARN of the instance profile to remove. This field is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'instance_profile_arn' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -315,9 +323,15 @@ func newRemove() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = removeJson.Unmarshal(&removeReq)
-			if err != nil {
-				return err
+			diags := removeJson.Unmarshal(&removeReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -341,12 +355,6 @@ func newRemove() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newRemove())
-	})
 }
 
 // end service InstanceProfiles

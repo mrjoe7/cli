@@ -28,6 +28,12 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -57,12 +63,16 @@ func newDelete() *cobra.Command {
 	cmd.Long = `Delete permissions assignment.
   
   Deletes the workspace permissions assignment in a given account and workspace
-  for the specified principal.`
+  for the specified principal.
+
+  Arguments:
+    WORKSPACE_ID: The workspace ID for the account.
+    PRINCIPAL_ID: The ID of the user, service principal, or group.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -99,12 +109,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -125,12 +129,15 @@ func newGet() *cobra.Command {
 	cmd.Short = `List workspace permissions.`
 	cmd.Long = `List workspace permissions.
   
-  Get an array of workspace permissions for the specified account and workspace.`
+  Get an array of workspace permissions for the specified account and workspace.
+
+  Arguments:
+    WORKSPACE_ID: The workspace ID.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -163,12 +170,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -190,12 +191,15 @@ func newList() *cobra.Command {
 	cmd.Long = `Get permission assignments.
   
   Get the permission assignments for the specified Databricks account and
-  Databricks workspace.`
+  Databricks workspace.
+
+  Arguments:
+    WORKSPACE_ID: The workspace ID for the account.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -209,11 +213,8 @@ func newList() *cobra.Command {
 			return fmt.Errorf("invalid WORKSPACE_ID: %s", args[0])
 		}
 
-		response, err := a.WorkspaceAssignment.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := a.WorkspaceAssignment.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -226,12 +227,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -252,14 +247,25 @@ func newUpdate() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Use = "update"
+	// TODO: array: permissions
+
+	cmd.Use = "update WORKSPACE_ID PRINCIPAL_ID"
 	cmd.Short = `Create or update permissions assignment.`
 	cmd.Long = `Create or update permissions assignment.
   
   Creates or updates the workspace permissions assignment in a given account and
-  workspace for the specified principal.`
+  workspace for the specified principal.
+
+  Arguments:
+    WORKSPACE_ID: The workspace ID.
+    PRINCIPAL_ID: The ID of the user, service principal, or group.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(2)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustAccountClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -267,19 +273,31 @@ func newUpdate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		_, err = fmt.Sscan(args[0], &updateReq.WorkspaceId)
+		if err != nil {
+			return fmt.Errorf("invalid WORKSPACE_ID: %s", args[0])
+		}
+		_, err = fmt.Sscan(args[1], &updateReq.PrincipalId)
+		if err != nil {
+			return fmt.Errorf("invalid PRINCIPAL_ID: %s", args[1])
 		}
 
-		err = a.WorkspaceAssignment.Update(ctx, updateReq)
+		response, err := a.WorkspaceAssignment.Update(ctx, updateReq)
 		if err != nil {
 			return err
 		}
-		return nil
+		return cmdio.Render(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -292,12 +310,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service WorkspaceAssignment

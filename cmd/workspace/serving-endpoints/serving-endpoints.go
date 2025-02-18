@@ -29,16 +29,36 @@ func New() *cobra.Command {
   scalable REST API endpoints using serverless compute. This means the endpoints
   and associated compute resources are fully managed by Databricks and will not
   appear in your cloud account. A serving endpoint can consist of one or more
-  MLflow models from the Databricks Model Registry, called served models. A
-  serving endpoint can have at most ten served models. You can configure traffic
-  settings to define how requests should be routed to your served models behind
-  an endpoint. Additionally, you can configure the scale of resources that
-  should be applied to each served model.`,
+  MLflow models from the Databricks Model Registry, called served entities. A
+  serving endpoint can have at most ten served entities. You can configure
+  traffic settings to define how requests should be routed to your served
+  entities behind an endpoint. Additionally, you can configure the scale of
+  resources that should be applied to each served entity.`,
 		GroupID: "serving",
 		Annotations: map[string]string{
 			"package": "serving",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newBuildLogs())
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newExportMetrics())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetOpenApi())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newGetPermissions())
+	cmd.AddCommand(newHttpRequest())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newLogs())
+	cmd.AddCommand(newPatch())
+	cmd.AddCommand(newPut())
+	cmd.AddCommand(newPutAiGateway())
+	cmd.AddCommand(newQuery())
+	cmd.AddCommand(newSetPermissions())
+	cmd.AddCommand(newUpdateConfig())
+	cmd.AddCommand(newUpdatePermissions())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -65,16 +85,21 @@ func newBuildLogs() *cobra.Command {
 	// TODO: short flags
 
 	cmd.Use = "build-logs NAME SERVED_MODEL_NAME"
-	cmd.Short = `Retrieve the logs associated with building the model's environment for a given serving endpoint's served model.`
-	cmd.Long = `Retrieve the logs associated with building the model's environment for a given
-  serving endpoint's served model.
+	cmd.Short = `Get build logs for a served model.`
+	cmd.Long = `Get build logs for a served model.
   
-  Retrieves the build logs associated with the provided served model.`
+  Retrieves the build logs associated with the provided served model.
+
+  Arguments:
+    NAME: The name of the serving endpoint that the served model belongs to. This
+      field is required.
+    SERVED_MODEL_NAME: The name of the served model that build logs will be retrieved for. This
+      field is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -105,12 +130,6 @@ func newBuildLogs() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newBuildLogs())
-	})
-}
-
 // start create command
 
 // Slice with functions to override default command behavior.
@@ -134,13 +153,34 @@ func newCreate() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&createJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
+	// TODO: complex arg: ai_gateway
+	// TODO: complex arg: config
+	// TODO: array: rate_limits
+	cmd.Flags().BoolVar(&createReq.RouteOptimized, "route-optimized", createReq.RouteOptimized, `Enable route optimization for the serving endpoint.`)
 	// TODO: array: tags
 
-	cmd.Use = "create"
+	cmd.Use = "create NAME"
 	cmd.Short = `Create a new serving endpoint.`
-	cmd.Long = `Create a new serving endpoint.`
+	cmd.Long = `Create a new serving endpoint.
+
+  Arguments:
+    NAME: The name of the serving endpoint. This field is required and must be
+      unique across a Databricks workspace. An endpoint name can consist of
+      alphanumeric characters, dashes, and underscores.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(0)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'name' in your JSON input")
+			}
+			return nil
+		}
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -148,12 +188,19 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if !cmd.Flags().Changed("json") {
+			createReq.Name = args[0]
 		}
 
 		wait, err := w.ServingEndpoints.Create(ctx, createReq)
@@ -188,12 +235,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -217,7 +258,7 @@ func newDelete() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -247,12 +288,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start export-metrics command
 
 // Slice with functions to override default command behavior.
@@ -270,16 +305,20 @@ func newExportMetrics() *cobra.Command {
 	// TODO: short flags
 
 	cmd.Use = "export-metrics NAME"
-	cmd.Short = `Retrieve the metrics associated with a serving endpoint.`
-	cmd.Long = `Retrieve the metrics associated with a serving endpoint.
+	cmd.Short = `Get metrics of a serving endpoint.`
+	cmd.Long = `Get metrics of a serving endpoint.
   
   Retrieves the metrics associated with the provided serving endpoint in either
-  Prometheus or OpenMetrics exposition format.`
+  Prometheus or OpenMetrics exposition format.
+
+  Arguments:
+    NAME: The name of the serving endpoint to retrieve metrics for. This field is
+      required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -290,11 +329,12 @@ func newExportMetrics() *cobra.Command {
 
 		exportMetricsReq.Name = args[0]
 
-		err = w.ServingEndpoints.ExportMetrics(ctx, exportMetricsReq)
+		response, err := w.ServingEndpoints.ExportMetrics(ctx, exportMetricsReq)
 		if err != nil {
 			return err
 		}
-		return nil
+		defer response.Contents.Close()
+		return cmdio.Render(ctx, response.Contents)
 	}
 
 	// Disable completions since they are not applicable.
@@ -307,12 +347,6 @@ func newExportMetrics() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newExportMetrics())
-	})
 }
 
 // start get command
@@ -335,12 +369,15 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get a single serving endpoint.`
 	cmd.Long = `Get a single serving endpoint.
   
-  Retrieves the details for a single serving endpoint.`
+  Retrieves the details for a single serving endpoint.
+
+  Arguments:
+    NAME: The name of the serving endpoint. This field is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -370,10 +407,66 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
+// start get-open-api command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var getOpenApiOverrides []func(
+	*cobra.Command,
+	*serving.GetOpenApiRequest,
+)
+
+func newGetOpenApi() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var getOpenApiReq serving.GetOpenApiRequest
+
+	// TODO: short flags
+
+	cmd.Use = "get-open-api NAME"
+	cmd.Short = `Get the schema for a serving endpoint.`
+	cmd.Long = `Get the schema for a serving endpoint.
+  
+  Get the query schema of the serving endpoint in OpenAPI format. The schema
+  contains information for the supported paths, input and output format and
+  datatypes.
+
+  Arguments:
+    NAME: The name of the serving endpoint that the served model belongs to. This
+      field is required.`
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustWorkspaceClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		w := root.WorkspaceClient(ctx)
+
+		getOpenApiReq.Name = args[0]
+
+		response, err := w.ServingEndpoints.GetOpenApi(ctx, getOpenApiReq)
+		if err != nil {
+			return err
+		}
+		defer response.Contents.Close()
+		return cmdio.Render(ctx, response.Contents)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range getOpenApiOverrides {
+		fn(cmd, &getOpenApiReq)
+	}
+
+	return cmd
 }
 
 // start get-permission-levels command
@@ -396,12 +489,15 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get serving endpoint permission levels.`
 	cmd.Long = `Get serving endpoint permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    SERVING_ENDPOINT_ID: The serving endpoint for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -431,12 +527,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start get-permissions command
 
 // Slice with functions to override default command behavior.
@@ -458,12 +548,15 @@ func newGetPermissions() *cobra.Command {
 	cmd.Long = `Get serving endpoint permissions.
   
   Gets the permissions of a serving endpoint. Serving endpoints can inherit
-  permissions from their root object.`
+  permissions from their root object.
+
+  Arguments:
+    SERVING_ENDPOINT_ID: The serving endpoint for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -493,10 +586,76 @@ func newGetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissions())
-	})
+// start http-request command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var httpRequestOverrides []func(
+	*cobra.Command,
+	*serving.ExternalFunctionRequest,
+)
+
+func newHttpRequest() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var httpRequestReq serving.ExternalFunctionRequest
+
+	// TODO: short flags
+
+	cmd.Flags().StringVar(&httpRequestReq.Headers, "headers", httpRequestReq.Headers, `Additional headers for the request.`)
+	cmd.Flags().StringVar(&httpRequestReq.Json, "json", httpRequestReq.Json, `The JSON payload to send in the request body.`)
+	cmd.Flags().StringVar(&httpRequestReq.Params, "params", httpRequestReq.Params, `Query parameters for the request.`)
+
+	cmd.Use = "http-request CONNECTION_NAME METHOD PATH"
+	cmd.Short = `Make external services call using the credentials stored in UC Connection.`
+	cmd.Long = `Make external services call using the credentials stored in UC Connection.
+
+  Arguments:
+    CONNECTION_NAME: The connection name to use. This is required to identify the external
+      connection.
+    METHOD: The HTTP method to use (e.g., 'GET', 'POST').
+    PATH: The relative path for the API endpoint. This is required.`
+
+	// This command is being previewed; hide from help output.
+	cmd.Hidden = true
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(3)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustWorkspaceClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		w := root.WorkspaceClient(ctx)
+
+		httpRequestReq.ConnectionName = args[0]
+		_, err = fmt.Sscan(args[1], &httpRequestReq.Method)
+		if err != nil {
+			return fmt.Errorf("invalid METHOD: %s", args[1])
+		}
+		httpRequestReq.Path = args[2]
+
+		response, err := w.ServingEndpoints.HttpRequest(ctx, httpRequestReq)
+		if err != nil {
+			return err
+		}
+		defer response.Contents.Close()
+		return cmdio.Render(ctx, response.Contents)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range httpRequestOverrides {
+		fn(cmd, &httpRequestReq)
+	}
+
+	return cmd
 }
 
 // start list command
@@ -511,8 +670,8 @@ func newList() *cobra.Command {
 	cmd := &cobra.Command{}
 
 	cmd.Use = "list"
-	cmd.Short = `Retrieve all serving endpoints.`
-	cmd.Long = `Retrieve all serving endpoints.`
+	cmd.Short = `Get all serving endpoints.`
+	cmd.Long = `Get all serving endpoints.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -520,11 +679,8 @@ func newList() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.ServingEndpoints.ListAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.ServingEndpoints.List(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -537,12 +693,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start logs command
@@ -562,16 +712,21 @@ func newLogs() *cobra.Command {
 	// TODO: short flags
 
 	cmd.Use = "logs NAME SERVED_MODEL_NAME"
-	cmd.Short = `Retrieve the most recent log lines associated with a given serving endpoint's served model.`
-	cmd.Long = `Retrieve the most recent log lines associated with a given serving endpoint's
-  served model.
+	cmd.Short = `Get the latest logs for a served model.`
+	cmd.Long = `Get the latest logs for a served model.
   
-  Retrieves the service logs associated with the provided served model.`
+  Retrieves the service logs associated with the provided served model.
+
+  Arguments:
+    NAME: The name of the serving endpoint that the served model belongs to. This
+      field is required.
+    SERVED_MODEL_NAME: The name of the served model that logs will be retrieved for. This field
+      is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -602,12 +757,6 @@ func newLogs() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newLogs())
-	})
-}
-
 // start patch command
 
 // Slice with functions to override default command behavior.
@@ -630,16 +779,20 @@ func newPatch() *cobra.Command {
 	// TODO: array: delete_tags
 
 	cmd.Use = "patch NAME"
-	cmd.Short = `Patch the tags of a serving endpoint.`
-	cmd.Long = `Patch the tags of a serving endpoint.
+	cmd.Short = `Update tags of a serving endpoint.`
+	cmd.Long = `Update tags of a serving endpoint.
   
   Used to batch add and delete tags from a serving endpoint with a single API
-  call.`
+  call.
+
+  Arguments:
+    NAME: The name of the serving endpoint who's tags to patch. This field is
+      required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -649,9 +802,15 @@ func newPatch() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = patchJson.Unmarshal(&patchReq)
-			if err != nil {
-				return err
+			diags := patchJson.Unmarshal(&patchReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		patchReq.Name = args[0]
@@ -675,10 +834,160 @@ func newPatch() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newPatch())
-	})
+// start put command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var putOverrides []func(
+	*cobra.Command,
+	*serving.PutRequest,
+)
+
+func newPut() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var putReq serving.PutRequest
+	var putJson flags.JsonFlag
+
+	// TODO: short flags
+	cmd.Flags().Var(&putJson, "json", `either inline JSON string or @path/to/file.json with request body`)
+
+	// TODO: array: rate_limits
+
+	cmd.Use = "put NAME"
+	cmd.Short = `Update rate limits of a serving endpoint.`
+	cmd.Long = `Update rate limits of a serving endpoint.
+  
+  Used to update the rate limits of a serving endpoint. NOTE: Only foundation
+  model endpoints are currently supported. For external models, use AI Gateway
+  to manage rate limits.
+
+  Arguments:
+    NAME: The name of the serving endpoint whose rate limits are being updated. This
+      field is required.`
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustWorkspaceClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		w := root.WorkspaceClient(ctx)
+
+		if cmd.Flags().Changed("json") {
+			diags := putJson.Unmarshal(&putReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		putReq.Name = args[0]
+
+		response, err := w.ServingEndpoints.Put(ctx, putReq)
+		if err != nil {
+			return err
+		}
+		return cmdio.Render(ctx, response)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range putOverrides {
+		fn(cmd, &putReq)
+	}
+
+	return cmd
+}
+
+// start put-ai-gateway command
+
+// Slice with functions to override default command behavior.
+// Functions can be added from the `init()` function in manually curated files in this directory.
+var putAiGatewayOverrides []func(
+	*cobra.Command,
+	*serving.PutAiGatewayRequest,
+)
+
+func newPutAiGateway() *cobra.Command {
+	cmd := &cobra.Command{}
+
+	var putAiGatewayReq serving.PutAiGatewayRequest
+	var putAiGatewayJson flags.JsonFlag
+
+	// TODO: short flags
+	cmd.Flags().Var(&putAiGatewayJson, "json", `either inline JSON string or @path/to/file.json with request body`)
+
+	// TODO: complex arg: guardrails
+	// TODO: complex arg: inference_table_config
+	// TODO: array: rate_limits
+	// TODO: complex arg: usage_tracking_config
+
+	cmd.Use = "put-ai-gateway NAME"
+	cmd.Short = `Update AI Gateway of a serving endpoint.`
+	cmd.Long = `Update AI Gateway of a serving endpoint.
+  
+  Used to update the AI Gateway of a serving endpoint. NOTE: Only external model
+  and provisioned throughput endpoints are currently supported.
+
+  Arguments:
+    NAME: The name of the serving endpoint whose AI Gateway is being updated. This
+      field is required.`
+
+	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
+
+	cmd.PreRunE = root.MustWorkspaceClient
+	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		ctx := cmd.Context()
+		w := root.WorkspaceClient(ctx)
+
+		if cmd.Flags().Changed("json") {
+			diags := putAiGatewayJson.Unmarshal(&putAiGatewayReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		putAiGatewayReq.Name = args[0]
+
+		response, err := w.ServingEndpoints.PutAiGateway(ctx, putAiGatewayReq)
+		if err != nil {
+			return err
+		}
+		return cmdio.Render(ctx, response)
+	}
+
+	// Disable completions since they are not applicable.
+	// Can be overridden by manual implementation in `override.go`.
+	cmd.ValidArgsFunction = cobra.NoFileCompletions
+
+	// Apply optional overrides to this command.
+	for _, fn := range putAiGatewayOverrides {
+		fn(cmd, &putAiGatewayReq)
+	}
+
+	return cmd
 }
 
 // start query command
@@ -701,17 +1010,29 @@ func newQuery() *cobra.Command {
 
 	// TODO: array: dataframe_records
 	// TODO: complex arg: dataframe_split
+	// TODO: map via StringToStringVar: extra_params
+	// TODO: any: input
 	// TODO: any: inputs
 	// TODO: array: instances
+	cmd.Flags().IntVar(&queryReq.MaxTokens, "max-tokens", queryReq.MaxTokens, `The max tokens field used ONLY for __completions__ and __chat external & foundation model__ serving endpoints.`)
+	// TODO: array: messages
+	cmd.Flags().IntVar(&queryReq.N, "n", queryReq.N, `The n (number of candidates) field used ONLY for __completions__ and __chat external & foundation model__ serving endpoints.`)
+	// TODO: any: prompt
+	// TODO: array: stop
+	cmd.Flags().BoolVar(&queryReq.Stream, "stream", queryReq.Stream, `The stream field used ONLY for __completions__ and __chat external & foundation model__ serving endpoints.`)
+	cmd.Flags().Float64Var(&queryReq.Temperature, "temperature", queryReq.Temperature, `The temperature field used ONLY for __completions__ and __chat external & foundation model__ serving endpoints.`)
 
 	cmd.Use = "query NAME"
-	cmd.Short = `Query a serving endpoint with provided model input.`
-	cmd.Long = `Query a serving endpoint with provided model input.`
+	cmd.Short = `Query a serving endpoint.`
+	cmd.Long = `Query a serving endpoint.
+
+  Arguments:
+    NAME: The name of the serving endpoint. This field is required.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -721,9 +1042,15 @@ func newQuery() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = queryJson.Unmarshal(&queryReq)
-			if err != nil {
-				return err
+			diags := queryJson.Unmarshal(&queryReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		queryReq.Name = args[0]
@@ -745,12 +1072,6 @@ func newQuery() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newQuery())
-	})
 }
 
 // start set-permissions command
@@ -777,13 +1098,17 @@ func newSetPermissions() *cobra.Command {
 	cmd.Short = `Set serving endpoint permissions.`
 	cmd.Long = `Set serving endpoint permissions.
   
-  Sets permissions on a serving endpoint. Serving endpoints can inherit
-  permissions from their root object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their root object.
+
+  Arguments:
+    SERVING_ENDPOINT_ID: The serving endpoint for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -793,9 +1118,15 @@ func newSetPermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setPermissionsJson.Unmarshal(&setPermissionsReq)
-			if err != nil {
-				return err
+			diags := setPermissionsJson.Unmarshal(&setPermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		setPermissionsReq.ServingEndpointId = args[0]
@@ -817,12 +1148,6 @@ func newSetPermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetPermissions())
-	})
 }
 
 // start update-config command
@@ -848,18 +1173,29 @@ func newUpdateConfig() *cobra.Command {
 	// TODO: short flags
 	cmd.Flags().Var(&updateConfigJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
+	// TODO: complex arg: auto_capture_config
+	// TODO: array: served_entities
+	// TODO: array: served_models
 	// TODO: complex arg: traffic_config
 
-	cmd.Use = "update-config"
-	cmd.Short = `Update a serving endpoint with a new config.`
-	cmd.Long = `Update a serving endpoint with a new config.
+	cmd.Use = "update-config NAME"
+	cmd.Short = `Update config of a serving endpoint.`
+	cmd.Long = `Update config of a serving endpoint.
   
-  Updates any combination of the serving endpoint's served models, the compute
-  configuration of those served models, and the endpoint's traffic config. An
+  Updates any combination of the serving endpoint's served entities, the compute
+  configuration of those served entities, and the endpoint's traffic config. An
   endpoint that already has an update in progress can not be updated until the
-  current update completes or fails.`
+  current update completes or fails.
+
+  Arguments:
+    NAME: The name of the serving endpoint to update. This field is required.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(1)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -867,13 +1203,18 @@ func newUpdateConfig() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateConfigJson.Unmarshal(&updateConfigReq)
-			if err != nil {
-				return err
+			diags := updateConfigJson.Unmarshal(&updateConfigReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
 		}
+		updateConfigReq.Name = args[0]
 
 		wait, err := w.ServingEndpoints.UpdateConfig(ctx, updateConfigReq)
 		if err != nil {
@@ -907,12 +1248,6 @@ func newUpdateConfig() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdateConfig())
-	})
-}
-
 // start update-permissions command
 
 // Slice with functions to override default command behavior.
@@ -938,12 +1273,15 @@ func newUpdatePermissions() *cobra.Command {
 	cmd.Long = `Update serving endpoint permissions.
   
   Updates the permissions on a serving endpoint. Serving endpoints can inherit
-  permissions from their root object.`
+  permissions from their root object.
+
+  Arguments:
+    SERVING_ENDPOINT_ID: The serving endpoint for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -953,9 +1291,15 @@ func newUpdatePermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updatePermissionsJson.Unmarshal(&updatePermissionsReq)
-			if err != nil {
-				return err
+			diags := updatePermissionsJson.Unmarshal(&updatePermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updatePermissionsReq.ServingEndpointId = args[0]
@@ -977,12 +1321,6 @@ func newUpdatePermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdatePermissions())
-	})
 }
 
 // end service ServingEndpoints

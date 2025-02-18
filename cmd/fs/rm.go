@@ -9,9 +9,9 @@ import (
 func newRmCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "rm PATH",
-		Short:   "Remove files and directories from dbfs.",
-		Long:    `Remove files and directories from dbfs.`,
-		Args:    cobra.ExactArgs(1),
+		Short:   "Remove files and directories.",
+		Long:    `Remove files and directories from DBFS and UC Volumes.`,
+		Args:    root.ExactArgs(1),
 		PreRunE: root.MustWorkspaceClient,
 	}
 
@@ -31,6 +31,9 @@ func newRmCommand() *cobra.Command {
 		}
 		return f.Delete(ctx, path)
 	}
+
+	v := newValidArgs()
+	cmd.ValidArgsFunction = v.Validate
 
 	return cmd
 }

@@ -35,6 +35,38 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreateExperiment())
+	cmd.AddCommand(newCreateRun())
+	cmd.AddCommand(newDeleteExperiment())
+	cmd.AddCommand(newDeleteRun())
+	cmd.AddCommand(newDeleteRuns())
+	cmd.AddCommand(newDeleteTag())
+	cmd.AddCommand(newGetByName())
+	cmd.AddCommand(newGetExperiment())
+	cmd.AddCommand(newGetHistory())
+	cmd.AddCommand(newGetPermissionLevels())
+	cmd.AddCommand(newGetPermissions())
+	cmd.AddCommand(newGetRun())
+	cmd.AddCommand(newListArtifacts())
+	cmd.AddCommand(newListExperiments())
+	cmd.AddCommand(newLogBatch())
+	cmd.AddCommand(newLogInputs())
+	cmd.AddCommand(newLogMetric())
+	cmd.AddCommand(newLogModel())
+	cmd.AddCommand(newLogParam())
+	cmd.AddCommand(newRestoreExperiment())
+	cmd.AddCommand(newRestoreRun())
+	cmd.AddCommand(newRestoreRuns())
+	cmd.AddCommand(newSearchExperiments())
+	cmd.AddCommand(newSearchRuns())
+	cmd.AddCommand(newSetExperimentTag())
+	cmd.AddCommand(newSetPermissions())
+	cmd.AddCommand(newSetTag())
+	cmd.AddCommand(newUpdateExperiment())
+	cmd.AddCommand(newUpdatePermissions())
+	cmd.AddCommand(newUpdateRun())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -73,19 +105,22 @@ func newCreateExperiment() *cobra.Command {
   already exist and fails if another experiment with the same name already
   exists.
   
-  Throws RESOURCE_ALREADY_EXISTS if a experiment with the given name exists.`
+  Throws RESOURCE_ALREADY_EXISTS if a experiment with the given name exists.
+
+  Arguments:
+    NAME: Experiment name.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'name' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -95,9 +130,15 @@ func newCreateExperiment() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createExperimentJson.Unmarshal(&createExperimentReq)
-			if err != nil {
-				return err
+			diags := createExperimentJson.Unmarshal(&createExperimentReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -121,12 +162,6 @@ func newCreateExperiment() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreateExperiment())
-	})
 }
 
 // start create-run command
@@ -164,7 +199,7 @@ func newCreateRun() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -174,9 +209,15 @@ func newCreateRun() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createRunJson.Unmarshal(&createRunReq)
-			if err != nil {
-				return err
+			diags := createRunJson.Unmarshal(&createRunReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -197,12 +238,6 @@ func newCreateRun() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreateRun())
-	})
 }
 
 // start delete-experiment command
@@ -229,19 +264,22 @@ func newDeleteExperiment() *cobra.Command {
   
   Marks an experiment and associated metadata, runs, metrics, params, and tags
   for deletion. If the experiment uses FileStore, artifacts associated with
-  experiment are also deleted.`
+  experiment are also deleted.
+
+  Arguments:
+    EXPERIMENT_ID: ID of the associated experiment.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'experiment_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -251,9 +289,15 @@ func newDeleteExperiment() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteExperimentJson.Unmarshal(&deleteExperimentReq)
-			if err != nil {
-				return err
+			diags := deleteExperimentJson.Unmarshal(&deleteExperimentReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -279,12 +323,6 @@ func newDeleteExperiment() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteExperiment())
-	})
-}
-
 // start delete-run command
 
 // Slice with functions to override default command behavior.
@@ -307,19 +345,22 @@ func newDeleteRun() *cobra.Command {
 	cmd.Short = `Delete a run.`
 	cmd.Long = `Delete a run.
   
-  Marks a run for deletion.`
+  Marks a run for deletion.
+
+  Arguments:
+    RUN_ID: ID of the run to delete.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'run_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -329,9 +370,15 @@ func newDeleteRun() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteRunJson.Unmarshal(&deleteRunReq)
-			if err != nil {
-				return err
+			diags := deleteRunJson.Unmarshal(&deleteRunReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -355,12 +402,6 @@ func newDeleteRun() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteRun())
-	})
 }
 
 // start delete-runs command
@@ -388,19 +429,27 @@ func newDeleteRuns() *cobra.Command {
 	cmd.Long = `Delete runs by creation time.
   
   Bulk delete runs in an experiment that were created prior to or at the
-  specified timestamp. Deletes at most max_runs per request.`
+  specified timestamp. Deletes at most max_runs per request. To call this API
+  from a Databricks Notebook in Python, you can use the client code snippet on
+  https://learn.microsoft.com/en-us/azure/databricks/mlflow/runs#bulk-delete.
+
+  Arguments:
+    EXPERIMENT_ID: The ID of the experiment containing the runs to delete.
+    MAX_TIMESTAMP_MILLIS: The maximum creation timestamp in milliseconds since the UNIX epoch for
+      deleting runs. Only runs created prior to or at this timestamp are
+      deleted.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'experiment_id', 'max_timestamp_millis' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -410,9 +459,15 @@ func newDeleteRuns() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteRunsJson.Unmarshal(&deleteRunsReq)
-			if err != nil {
-				return err
+			diags := deleteRunsJson.Unmarshal(&deleteRunsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -444,12 +499,6 @@ func newDeleteRuns() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteRuns())
-	})
-}
-
 // start delete-tag command
 
 // Slice with functions to override default command behavior.
@@ -473,19 +522,23 @@ func newDeleteTag() *cobra.Command {
 	cmd.Long = `Delete a tag.
   
   Deletes a tag on a run. Tags are run metadata that can be updated during a run
-  and after a run completes.`
+  and after a run completes.
+
+  Arguments:
+    RUN_ID: ID of the run that the tag was logged under. Must be provided.
+    KEY: Name of the tag. Maximum size is 255 bytes. Must be provided.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'run_id', 'key' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -495,9 +548,15 @@ func newDeleteTag() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteTagJson.Unmarshal(&deleteTagReq)
-			if err != nil {
-				return err
+			diags := deleteTagJson.Unmarshal(&deleteTagReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -524,12 +583,6 @@ func newDeleteTag() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteTag())
-	})
 }
 
 // start get-by-name command
@@ -560,12 +613,15 @@ func newGetByName() *cobra.Command {
   them.
   
   Throws RESOURCE_DOES_NOT_EXIST if no experiment with the specified name
-  exists.`
+  exists.
+
+  Arguments:
+    EXPERIMENT_NAME: Name of the associated experiment.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -595,12 +651,6 @@ func newGetByName() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetByName())
-	})
-}
-
 // start get-experiment command
 
 // Slice with functions to override default command behavior.
@@ -621,12 +671,15 @@ func newGetExperiment() *cobra.Command {
 	cmd.Short = `Get an experiment.`
 	cmd.Long = `Get an experiment.
   
-  Gets metadata for an experiment. This method works on deleted experiments.`
+  Gets metadata for an experiment. This method works on deleted experiments.
+
+  Arguments:
+    EXPERIMENT_ID: ID of the associated experiment.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -656,12 +709,6 @@ func newGetExperiment() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetExperiment())
-	})
-}
-
 // start get-history command
 
 // Slice with functions to override default command behavior.
@@ -687,12 +734,15 @@ func newGetHistory() *cobra.Command {
 	cmd.Short = `Get history of a given metric within a run.`
 	cmd.Long = `Get history of a given metric within a run.
   
-  Gets a list of all values for the specified metric for a given run.`
+  Gets a list of all values for the specified metric for a given run.
+
+  Arguments:
+    METRIC_KEY: Name of the metric.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -703,11 +753,8 @@ func newGetHistory() *cobra.Command {
 
 		getHistoryReq.MetricKey = args[0]
 
-		response, err := w.Experiments.GetHistoryAll(ctx, getHistoryReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Experiments.GetHistory(ctx, getHistoryReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -720,12 +767,6 @@ func newGetHistory() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetHistory())
-	})
 }
 
 // start get-permission-levels command
@@ -748,12 +789,15 @@ func newGetPermissionLevels() *cobra.Command {
 	cmd.Short = `Get experiment permission levels.`
 	cmd.Long = `Get experiment permission levels.
   
-  Gets the permission levels that a user can have on an object.`
+  Gets the permission levels that a user can have on an object.
+
+  Arguments:
+    EXPERIMENT_ID: The experiment for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -783,12 +827,6 @@ func newGetPermissionLevels() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissionLevels())
-	})
-}
-
 // start get-permissions command
 
 // Slice with functions to override default command behavior.
@@ -810,12 +848,15 @@ func newGetPermissions() *cobra.Command {
 	cmd.Long = `Get experiment permissions.
   
   Gets the permissions of an experiment. Experiments can inherit permissions
-  from their root object.`
+  from their root object.
+
+  Arguments:
+    EXPERIMENT_ID: The experiment for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -845,12 +886,6 @@ func newGetPermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetPermissions())
-	})
-}
-
 // start get-run command
 
 // Slice with functions to override default command behavior.
@@ -878,12 +913,15 @@ func newGetRun() *cobra.Command {
   with the latest timestamp.
   
   If there are multiple values with the latest timestamp, return the maximum of
-  these values.`
+  these values.
+
+  Arguments:
+    RUN_ID: ID of the run to fetch. Must be provided.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -913,12 +951,6 @@ func newGetRun() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetRun())
-	})
-}
-
 // start list-artifacts command
 
 // Slice with functions to override default command behavior.
@@ -945,12 +977,17 @@ func newListArtifacts() *cobra.Command {
 	cmd.Long = `Get all artifacts.
   
   List artifacts for a run. Takes an optional artifact_path prefix. If it is
-  specified, the response contains only artifacts with the specified prefix.",`
+  specified, the response contains only artifacts with the specified prefix.
+  This API does not support pagination when listing artifacts in UC Volumes. A
+  maximum of 1000 artifacts will be retrieved for UC Volumes. Please call
+  /api/2.0/fs/directories{directory_path} for listing artifacts in UC Volumes,
+  which supports pagination. See [List directory contents | Files
+  API](/api/workspace/files/listdirectorycontents).`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -959,11 +996,8 @@ func newListArtifacts() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.Experiments.ListArtifactsAll(ctx, listArtifactsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Experiments.ListArtifacts(ctx, listArtifactsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -976,12 +1010,6 @@ func newListArtifacts() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListArtifacts())
-	})
 }
 
 // start list-experiments command
@@ -1013,7 +1041,7 @@ func newListExperiments() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -1022,11 +1050,8 @@ func newListExperiments() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		response, err := w.Experiments.ListExperimentsAll(ctx, listExperimentsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Experiments.ListExperiments(ctx, listExperimentsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -1039,12 +1064,6 @@ func newListExperiments() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListExperiments())
-	})
 }
 
 // start log-batch command
@@ -1115,7 +1134,7 @@ func newLogBatch() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -1125,9 +1144,15 @@ func newLogBatch() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = logBatchJson.Unmarshal(&logBatchReq)
-			if err != nil {
-				return err
+			diags := logBatchJson.Unmarshal(&logBatchReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1148,12 +1173,6 @@ func newLogBatch() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newLogBatch())
-	})
 }
 
 // start log-inputs command
@@ -1187,7 +1206,7 @@ func newLogInputs() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -1197,9 +1216,15 @@ func newLogInputs() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = logInputsJson.Unmarshal(&logInputsReq)
-			if err != nil {
-				return err
+			diags := logInputsJson.Unmarshal(&logInputsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1220,12 +1245,6 @@ func newLogInputs() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newLogInputs())
-	})
 }
 
 // start log-metric command
@@ -1256,19 +1275,24 @@ func newLogMetric() *cobra.Command {
   
   Logs a metric for a run. A metric is a key-value pair (string key, float
   value) with an associated timestamp. Examples include the various metrics that
-  represent ML model accuracy. A metric can be logged multiple times.`
+  represent ML model accuracy. A metric can be logged multiple times.
+
+  Arguments:
+    KEY: Name of the metric.
+    VALUE: Double value of the metric being logged.
+    TIMESTAMP: Unix timestamp in milliseconds at the time metric was logged.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'key', 'value', 'timestamp' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -1278,9 +1302,15 @@ func newLogMetric() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = logMetricJson.Unmarshal(&logMetricReq)
-			if err != nil {
-				return err
+			diags := logMetricJson.Unmarshal(&logMetricReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -1318,12 +1348,6 @@ func newLogMetric() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newLogMetric())
-	})
-}
-
 // start log-model command
 
 // Slice with functions to override default command behavior.
@@ -1355,7 +1379,7 @@ func newLogModel() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -1365,9 +1389,15 @@ func newLogModel() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = logModelJson.Unmarshal(&logModelReq)
-			if err != nil {
-				return err
+			diags := logModelJson.Unmarshal(&logModelReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1388,12 +1418,6 @@ func newLogModel() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newLogModel())
-	})
 }
 
 // start log-param command
@@ -1424,19 +1448,23 @@ func newLogParam() *cobra.Command {
   Logs a param used for a run. A param is a key-value pair (string key, string
   value). Examples include hyperparameters used for ML model training and
   constant dates and values used in an ETL pipeline. A param can be logged only
-  once for a run.`
+  once for a run.
+
+  Arguments:
+    KEY: Name of the param. Maximum size is 255 bytes.
+    VALUE: String value of the param being logged. Maximum size is 500 bytes.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'key', 'value' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -1446,9 +1474,15 @@ func newLogParam() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = logParamJson.Unmarshal(&logParamReq)
-			if err != nil {
-				return err
+			diags := logParamJson.Unmarshal(&logParamReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -1475,12 +1509,6 @@ func newLogParam() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newLogParam())
-	})
 }
 
 // start restore-experiment command
@@ -1510,19 +1538,22 @@ func newRestoreExperiment() *cobra.Command {
   underlying artifacts associated with experiment are also restored.
   
   Throws RESOURCE_DOES_NOT_EXIST if experiment was never created or was
-  permanently deleted.`
+  permanently deleted.
+
+  Arguments:
+    EXPERIMENT_ID: ID of the associated experiment.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'experiment_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -1532,9 +1563,15 @@ func newRestoreExperiment() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = restoreExperimentJson.Unmarshal(&restoreExperimentReq)
-			if err != nil {
-				return err
+			diags := restoreExperimentJson.Unmarshal(&restoreExperimentReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -1560,12 +1597,6 @@ func newRestoreExperiment() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newRestoreExperiment())
-	})
-}
-
 // start restore-run command
 
 // Slice with functions to override default command behavior.
@@ -1588,19 +1619,22 @@ func newRestoreRun() *cobra.Command {
 	cmd.Short = `Restore a run.`
 	cmd.Long = `Restore a run.
   
-  Restores a deleted run.`
+  Restores a deleted run.
+
+  Arguments:
+    RUN_ID: ID of the run to restore.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'run_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -1610,9 +1644,15 @@ func newRestoreRun() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = restoreRunJson.Unmarshal(&restoreRunReq)
-			if err != nil {
-				return err
+			diags := restoreRunJson.Unmarshal(&restoreRunReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -1636,12 +1676,6 @@ func newRestoreRun() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newRestoreRun())
-	})
 }
 
 // start restore-runs command
@@ -1669,19 +1703,27 @@ func newRestoreRuns() *cobra.Command {
 	cmd.Long = `Restore runs by deletion time.
   
   Bulk restore runs in an experiment that were deleted no earlier than the
-  specified timestamp. Restores at most max_runs per request.`
+  specified timestamp. Restores at most max_runs per request. To call this API
+  from a Databricks Notebook in Python, you can use the client code snippet on
+  https://learn.microsoft.com/en-us/azure/databricks/mlflow/runs#bulk-restore.
+
+  Arguments:
+    EXPERIMENT_ID: The ID of the experiment containing the runs to restore.
+    MIN_TIMESTAMP_MILLIS: The minimum deletion timestamp in milliseconds since the UNIX epoch for
+      restoring runs. Only runs deleted no earlier than this timestamp are
+      restored.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'experiment_id', 'min_timestamp_millis' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -1691,9 +1733,15 @@ func newRestoreRuns() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = restoreRunsJson.Unmarshal(&restoreRunsReq)
-			if err != nil {
-				return err
+			diags := restoreRunsJson.Unmarshal(&restoreRunsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -1725,12 +1773,6 @@ func newRestoreRuns() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newRestoreRuns())
-	})
-}
-
 // start search-experiments command
 
 // Slice with functions to override default command behavior.
@@ -1753,7 +1795,7 @@ func newSearchExperiments() *cobra.Command {
 	cmd.Flags().Int64Var(&searchExperimentsReq.MaxResults, "max-results", searchExperimentsReq.MaxResults, `Maximum number of experiments desired.`)
 	// TODO: array: order_by
 	cmd.Flags().StringVar(&searchExperimentsReq.PageToken, "page-token", searchExperimentsReq.PageToken, `Token indicating the page of experiments to fetch.`)
-	cmd.Flags().Var(&searchExperimentsReq.ViewType, "view-type", `Qualifier for type of experiments to be returned.`)
+	cmd.Flags().Var(&searchExperimentsReq.ViewType, "view-type", `Qualifier for type of experiments to be returned. Supported values: [ACTIVE_ONLY, ALL, DELETED_ONLY]`)
 
 	cmd.Use = "search-experiments"
 	cmd.Short = `Search experiments.`
@@ -1764,7 +1806,7 @@ func newSearchExperiments() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -1774,17 +1816,20 @@ func newSearchExperiments() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = searchExperimentsJson.Unmarshal(&searchExperimentsReq)
-			if err != nil {
-				return err
+			diags := searchExperimentsJson.Unmarshal(&searchExperimentsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
-		response, err := w.Experiments.SearchExperimentsAll(ctx, searchExperimentsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Experiments.SearchExperiments(ctx, searchExperimentsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -1797,12 +1842,6 @@ func newSearchExperiments() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSearchExperiments())
-	})
 }
 
 // start search-runs command
@@ -1828,7 +1867,7 @@ func newSearchRuns() *cobra.Command {
 	cmd.Flags().IntVar(&searchRunsReq.MaxResults, "max-results", searchRunsReq.MaxResults, `Maximum number of runs desired.`)
 	// TODO: array: order_by
 	cmd.Flags().StringVar(&searchRunsReq.PageToken, "page-token", searchRunsReq.PageToken, `Token for the current page of runs.`)
-	cmd.Flags().Var(&searchRunsReq.RunViewType, "run-view-type", `Whether to display only active, only deleted, or all runs.`)
+	cmd.Flags().Var(&searchRunsReq.RunViewType, "run-view-type", `Whether to display only active, only deleted, or all runs. Supported values: [ACTIVE_ONLY, ALL, DELETED_ONLY]`)
 
 	cmd.Use = "search-runs"
 	cmd.Short = `Search for runs.`
@@ -1841,7 +1880,7 @@ func newSearchRuns() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -1851,17 +1890,20 @@ func newSearchRuns() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = searchRunsJson.Unmarshal(&searchRunsReq)
-			if err != nil {
-				return err
+			diags := searchRunsJson.Unmarshal(&searchRunsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
-		response, err := w.Experiments.SearchRunsAll(ctx, searchRunsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Experiments.SearchRuns(ctx, searchRunsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -1874,12 +1916,6 @@ func newSearchRuns() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSearchRuns())
-	})
 }
 
 // start set-experiment-tag command
@@ -1904,19 +1940,27 @@ func newSetExperimentTag() *cobra.Command {
 	cmd.Short = `Set a tag.`
 	cmd.Long = `Set a tag.
   
-  Sets a tag on an experiment. Experiment tags are metadata that can be updated.`
+  Sets a tag on an experiment. Experiment tags are metadata that can be updated.
+
+  Arguments:
+    EXPERIMENT_ID: ID of the experiment under which to log the tag. Must be provided.
+    KEY: Name of the tag. Maximum size depends on storage backend. All storage
+      backends are guaranteed to support key values up to 250 bytes in size.
+    VALUE: String value of the tag being logged. Maximum size depends on storage
+      backend. All storage backends are guaranteed to support key values up to
+      5000 bytes in size.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'experiment_id', 'key', 'value' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -1926,9 +1970,15 @@ func newSetExperimentTag() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setExperimentTagJson.Unmarshal(&setExperimentTagReq)
-			if err != nil {
-				return err
+			diags := setExperimentTagJson.Unmarshal(&setExperimentTagReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -1960,12 +2010,6 @@ func newSetExperimentTag() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetExperimentTag())
-	})
-}
-
 // start set-permissions command
 
 // Slice with functions to override default command behavior.
@@ -1990,13 +2034,17 @@ func newSetPermissions() *cobra.Command {
 	cmd.Short = `Set experiment permissions.`
 	cmd.Long = `Set experiment permissions.
   
-  Sets permissions on an experiment. Experiments can inherit permissions from
-  their root object.`
+  Sets permissions on an object, replacing existing permissions if they exist.
+  Deletes all direct permissions if none are specified. Objects can inherit
+  permissions from their root object.
+
+  Arguments:
+    EXPERIMENT_ID: The experiment for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -2006,9 +2054,15 @@ func newSetPermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setPermissionsJson.Unmarshal(&setPermissionsReq)
-			if err != nil {
-				return err
+			diags := setPermissionsJson.Unmarshal(&setPermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		setPermissionsReq.ExperimentId = args[0]
@@ -2030,12 +2084,6 @@ func newSetPermissions() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetPermissions())
-	})
 }
 
 // start set-tag command
@@ -2064,19 +2112,26 @@ func newSetTag() *cobra.Command {
 	cmd.Long = `Set a tag.
   
   Sets a tag on a run. Tags are run metadata that can be updated during a run
-  and after a run completes.`
+  and after a run completes.
+
+  Arguments:
+    KEY: Name of the tag. Maximum size depends on storage backend. All storage
+      backends are guaranteed to support key values up to 250 bytes in size.
+    VALUE: String value of the tag being logged. Maximum size depends on storage
+      backend. All storage backends are guaranteed to support key values up to
+      5000 bytes in size.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'key', 'value' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -2086,9 +2141,15 @@ func newSetTag() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = setTagJson.Unmarshal(&setTagReq)
-			if err != nil {
-				return err
+			diags := setTagJson.Unmarshal(&setTagReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -2117,12 +2178,6 @@ func newSetTag() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newSetTag())
-	})
-}
-
 // start update-experiment command
 
 // Slice with functions to override default command behavior.
@@ -2147,19 +2202,22 @@ func newUpdateExperiment() *cobra.Command {
 	cmd.Short = `Update an experiment.`
 	cmd.Long = `Update an experiment.
   
-  Updates experiment metadata.`
+  Updates experiment metadata.
+
+  Arguments:
+    EXPERIMENT_ID: ID of the associated experiment.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'experiment_id' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -2169,9 +2227,15 @@ func newUpdateExperiment() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateExperimentJson.Unmarshal(&updateExperimentReq)
-			if err != nil {
-				return err
+			diags := updateExperimentJson.Unmarshal(&updateExperimentReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -2195,12 +2259,6 @@ func newUpdateExperiment() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdateExperiment())
-	})
 }
 
 // start update-permissions command
@@ -2228,12 +2286,15 @@ func newUpdatePermissions() *cobra.Command {
 	cmd.Long = `Update experiment permissions.
   
   Updates the permissions on an experiment. Experiments can inherit permissions
-  from their root object.`
+  from their root object.
+
+  Arguments:
+    EXPERIMENT_ID: The experiment for which to get or manage permissions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -2243,9 +2304,15 @@ func newUpdatePermissions() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updatePermissionsJson.Unmarshal(&updatePermissionsReq)
-			if err != nil {
-				return err
+			diags := updatePermissionsJson.Unmarshal(&updatePermissionsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updatePermissionsReq.ExperimentId = args[0]
@@ -2269,12 +2336,6 @@ func newUpdatePermissions() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdatePermissions())
-	})
-}
-
 // start update-run command
 
 // Slice with functions to override default command behavior.
@@ -2296,7 +2357,7 @@ func newUpdateRun() *cobra.Command {
 	cmd.Flags().Int64Var(&updateRunReq.EndTime, "end-time", updateRunReq.EndTime, `Unix timestamp in milliseconds of when the run ended.`)
 	cmd.Flags().StringVar(&updateRunReq.RunId, "run-id", updateRunReq.RunId, `ID of the run to update.`)
 	cmd.Flags().StringVar(&updateRunReq.RunUuid, "run-uuid", updateRunReq.RunUuid, `[Deprecated, use run_id instead] ID of the run to update.`)
-	cmd.Flags().Var(&updateRunReq.Status, "status", `Updated status of the run.`)
+	cmd.Flags().Var(&updateRunReq.Status, "status", `Updated status of the run. Supported values: [FAILED, FINISHED, KILLED, RUNNING, SCHEDULED]`)
 
 	cmd.Use = "update-run"
 	cmd.Short = `Update a run.`
@@ -2307,7 +2368,7 @@ func newUpdateRun() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(0)
+		check := root.ExactArgs(0)
 		return check(cmd, args)
 	}
 
@@ -2317,9 +2378,15 @@ func newUpdateRun() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateRunJson.Unmarshal(&updateRunReq)
-			if err != nil {
-				return err
+			diags := updateRunJson.Unmarshal(&updateRunReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -2340,12 +2407,6 @@ func newUpdateRun() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdateRun())
-	})
 }
 
 // end service Experiments

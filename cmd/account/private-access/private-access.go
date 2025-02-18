@@ -27,6 +27,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newReplace())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -54,7 +61,7 @@ func newCreate() *cobra.Command {
 	cmd.Flags().Var(&createJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	// TODO: array: allowed_vpc_endpoint_ids
-	cmd.Flags().Var(&createReq.PrivateAccessLevel, "private-access-level", `The private access level controls which VPC endpoints can connect to the UI or API of any workspace that attaches this private access settings object.`)
+	cmd.Flags().Var(&createReq.PrivateAccessLevel, "private-access-level", `The private access level controls which VPC endpoints can connect to the UI or API of any workspace that attaches this private access settings object. Supported values: [ACCOUNT, ENDPOINT]`)
 	cmd.Flags().BoolVar(&createReq.PublicAccessEnabled, "public-access-enabled", createReq.PublicAccessEnabled, `Determines if the workspace can be accessed over public internet.`)
 
 	cmd.Use = "create PRIVATE_ACCESS_SETTINGS_NAME REGION"
@@ -75,19 +82,24 @@ func newCreate() *cobra.Command {
   PrivateLink].
   
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
-  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html`
+  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
+
+  Arguments:
+    PRIVATE_ACCESS_SETTINGS_NAME: The human-readable name of the private access settings object.
+    REGION: The cloud region for workspaces associated with this private access
+      settings object.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'private_access_settings_name', 'region' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -97,9 +109,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -128,12 +146,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -158,10 +170,13 @@ func newDelete() *cobra.Command {
   is accessed over [AWS PrivateLink].
   
   Before configuring PrivateLink, read the [Databricks article about
-  PrivateLink].
+  PrivateLink].",
   
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
-  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html`
+  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
+
+  Arguments:
+    PRIVATE_ACCESS_SETTINGS_ID: Databricks Account API private access settings ID.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -208,12 +223,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -238,10 +247,13 @@ func newGet() *cobra.Command {
   accessed over [AWS PrivateLink].
   
   Before configuring PrivateLink, read the [Databricks article about
-  PrivateLink].
+  PrivateLink].",
   
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
-  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html`
+  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
+
+  Arguments:
+    PRIVATE_ACCESS_SETTINGS_ID: Databricks Account API private access settings ID.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -288,12 +300,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -337,12 +343,6 @@ func newList() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
-}
-
 // start replace command
 
 // Slice with functions to override default command behavior.
@@ -362,7 +362,7 @@ func newReplace() *cobra.Command {
 	cmd.Flags().Var(&replaceJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
 	// TODO: array: allowed_vpc_endpoint_ids
-	cmd.Flags().Var(&replaceReq.PrivateAccessLevel, "private-access-level", `The private access level controls which VPC endpoints can connect to the UI or API of any workspace that attaches this private access settings object.`)
+	cmd.Flags().Var(&replaceReq.PrivateAccessLevel, "private-access-level", `The private access level controls which VPC endpoints can connect to the UI or API of any workspace that attaches this private access settings object. Supported values: [ACCOUNT, ENDPOINT]`)
 	cmd.Flags().BoolVar(&replaceReq.PublicAccessEnabled, "public-access-enabled", replaceReq.PublicAccessEnabled, `Determines if the workspace can be accessed over public internet.`)
 
 	cmd.Use = "replace PRIVATE_ACCESS_SETTINGS_ID PRIVATE_ACCESS_SETTINGS_NAME REGION"
@@ -389,19 +389,25 @@ func newReplace() *cobra.Command {
   PrivateLink].
   
   [AWS PrivateLink]: https://aws.amazon.com/privatelink
-  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html`
+  [Databricks article about PrivateLink]: https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
+
+  Arguments:
+    PRIVATE_ACCESS_SETTINGS_ID: Databricks Account API private access settings ID.
+    PRIVATE_ACCESS_SETTINGS_NAME: The human-readable name of the private access settings object.
+    REGION: The cloud region for workspaces associated with this private access
+      settings object.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(1)(cmd, args)
+			err := root.ExactArgs(1)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, provide only PRIVATE_ACCESS_SETTINGS_ID as positional arguments. Provide 'private_access_settings_name', 'region' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -411,9 +417,15 @@ func newReplace() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = replaceJson.Unmarshal(&replaceReq)
-			if err != nil {
-				return err
+			diags := replaceJson.Unmarshal(&replaceReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		replaceReq.PrivateAccessSettingsId = args[0]
@@ -441,12 +453,6 @@ func newReplace() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newReplace())
-	})
 }
 
 // end service PrivateAccess

@@ -32,6 +32,13 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+	cmd.AddCommand(newUpdate())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -62,6 +69,8 @@ func newCreate() *cobra.Command {
 	cmd.Short = `Create a function.`
 	cmd.Long = `Create a function.
   
+  **WARNING: This API is experimental and will change in future versions**
+  
   Creates a new function
   
   The user must have the following permissions in order for the function to be
@@ -76,9 +85,15 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
@@ -101,12 +116,6 @@ func newCreate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
 }
 
 // start delete command
@@ -136,7 +145,11 @@ func newDelete() *cobra.Command {
   of the function's parent catalog - Is the owner of the function's parent
   schema and have the **USE_CATALOG** privilege on its parent catalog - Is the
   owner of the function itself and have both the **USE_CATALOG** privilege on
-  its parent catalog and the **USE_SCHEMA** privilege on its parent schema`
+  its parent catalog and the **USE_SCHEMA** privilege on its parent schema
+
+  Arguments:
+    NAME: The fully-qualified name of the function (of the form
+      __catalog_name__.__schema_name__.__function__name__).`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -183,12 +196,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -205,6 +212,8 @@ func newGet() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&getReq.IncludeBrowse, "include-browse", getReq.IncludeBrowse, `Whether to include functions in the response for which the principal can only access selective metadata for.`)
+
 	cmd.Use = "get NAME"
 	cmd.Short = `Get a function.`
 	cmd.Long = `Get a function.
@@ -215,7 +224,11 @@ func newGet() *cobra.Command {
   **USE_CATALOG** privilege on the function's parent catalog and be the owner of
   the function - Have the **USE_CATALOG** privilege on the function's parent
   catalog, the **USE_SCHEMA** privilege on the function's parent schema, and the
-  **EXECUTE** privilege on the function itself`
+  **EXECUTE** privilege on the function itself
+
+  Arguments:
+    NAME: The fully-qualified name of the function (of the form
+      __catalog_name__.__schema_name__.__function__name__).`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -262,12 +275,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -284,6 +291,10 @@ func newList() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().BoolVar(&listReq.IncludeBrowse, "include-browse", listReq.IncludeBrowse, `Whether to include functions in the response for which the principal can only access selective metadata for.`)
+	cmd.Flags().IntVar(&listReq.MaxResults, "max-results", listReq.MaxResults, `Maximum number of functions to return.`)
+	cmd.Flags().StringVar(&listReq.PageToken, "page-token", listReq.PageToken, `Opaque pagination token to go to next page based on previous query.`)
+
 	cmd.Use = "list CATALOG_NAME SCHEMA_NAME"
 	cmd.Short = `List functions.`
 	cmd.Long = `List functions.
@@ -294,12 +305,16 @@ func newList() *cobra.Command {
   **USE_SCHEMA** privilege on the schema, and the output list contains only
   functions for which either the user has the **EXECUTE** privilege or the user
   is the owner. There is no guarantee of a specific ordering of the elements in
-  the array.`
+  the array.
+
+  Arguments:
+    CATALOG_NAME: Name of parent catalog for functions of interest.
+    SCHEMA_NAME: Parent schema of functions.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -311,11 +326,8 @@ func newList() *cobra.Command {
 		listReq.CatalogName = args[0]
 		listReq.SchemaName = args[1]
 
-		response, err := w.Functions.ListAll(ctx, listReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Functions.List(ctx, listReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -328,12 +340,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // start update command
@@ -367,7 +373,11 @@ func newUpdate() *cobra.Command {
   function's parent schema and has the **USE_CATALOG** privilege on its parent
   catalog - Is the owner of the function itself and has the **USE_CATALOG**
   privilege on its parent catalog as well as the **USE_SCHEMA** privilege on the
-  function's parent schema.`
+  function's parent schema.
+
+  Arguments:
+    NAME: The fully-qualified name of the function (of the form
+      __catalog_name__.__schema_name__.__function__name__).`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -377,9 +387,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(args) == 0 {
@@ -418,12 +434,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service Functions

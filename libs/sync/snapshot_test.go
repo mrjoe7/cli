@@ -10,6 +10,7 @@ import (
 
 	"github.com/databricks/cli/libs/git"
 	"github.com/databricks/cli/libs/testfile"
+	"github.com/databricks/cli/libs/vfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func TestDiff(t *testing.T) {
 
 	// Create temp project dir
 	projectDir := t.TempDir()
-	fileSet, err := git.NewFileSet(projectDir)
+	fileSet, err := git.NewFileSetAtRoot(vfs.MustNew(projectDir))
 	require.NoError(t, err)
 	state := Snapshot{
 		SnapshotState: &SnapshotState{
@@ -46,11 +47,11 @@ func TestDiff(t *testing.T) {
 	defer f2.Close(t)
 
 	// New files are put
-	files, err := fileSet.All()
+	files, err := fileSet.Files()
 	assert.NoError(t, err)
 	change, err := state.diff(ctx, files)
 	assert.NoError(t, err)
-	assert.Len(t, change.delete, 0)
+	assert.Empty(t, change.delete)
 	assert.Len(t, change.put, 2)
 	assert.Contains(t, change.put, "hello.txt")
 	assert.Contains(t, change.put, "world.txt")
@@ -61,12 +62,12 @@ func TestDiff(t *testing.T) {
 	// world.txt is editted
 	f2.Overwrite(t, "bunnies are cute.")
 	assert.NoError(t, err)
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)
 
-	assert.Len(t, change.delete, 0)
+	assert.Empty(t, change.delete)
 	assert.Len(t, change.put, 1)
 	assert.Contains(t, change.put, "world.txt")
 	assertKeysOfMap(t, state.LastModifiedTimes, []string{"hello.txt", "world.txt"})
@@ -76,12 +77,12 @@ func TestDiff(t *testing.T) {
 	// hello.txt is deleted
 	f1.Remove(t)
 	assert.NoError(t, err)
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)
 	assert.Len(t, change.delete, 1)
-	assert.Len(t, change.put, 0)
+	assert.Empty(t, change.put)
 	assert.Contains(t, change.delete, "hello.txt")
 	assertKeysOfMap(t, state.LastModifiedTimes, []string{"world.txt"})
 	assert.Equal(t, map[string]string{"world.txt": "world.txt"}, state.LocalToRemoteNames)
@@ -93,7 +94,7 @@ func TestSymlinkDiff(t *testing.T) {
 
 	// Create temp project dir
 	projectDir := t.TempDir()
-	fileSet, err := git.NewFileSet(projectDir)
+	fileSet, err := git.NewFileSetAtRoot(vfs.MustNew(projectDir))
 	require.NoError(t, err)
 	state := Snapshot{
 		SnapshotState: &SnapshotState{
@@ -112,7 +113,7 @@ func TestSymlinkDiff(t *testing.T) {
 	err = os.Symlink(filepath.Join(projectDir, "foo"), filepath.Join(projectDir, "bar"))
 	assert.NoError(t, err)
 
-	files, err := fileSet.All()
+	files, err := fileSet.Files()
 	assert.NoError(t, err)
 	change, err := state.diff(ctx, files)
 	assert.NoError(t, err)
@@ -124,7 +125,7 @@ func TestFolderDiff(t *testing.T) {
 
 	// Create temp project dir
 	projectDir := t.TempDir()
-	fileSet, err := git.NewFileSet(projectDir)
+	fileSet, err := git.NewFileSetAtRoot(vfs.MustNew(projectDir))
 	require.NoError(t, err)
 	state := Snapshot{
 		SnapshotState: &SnapshotState{
@@ -140,26 +141,26 @@ func TestFolderDiff(t *testing.T) {
 	defer f1.Close(t)
 	f1.Overwrite(t, "# Databricks notebook source\nprint(\"abc\")")
 
-	files, err := fileSet.All()
+	files, err := fileSet.Files()
 	assert.NoError(t, err)
 	change, err := state.diff(ctx, files)
 	assert.NoError(t, err)
-	assert.Len(t, change.delete, 0)
-	assert.Len(t, change.rmdir, 0)
+	assert.Empty(t, change.delete)
+	assert.Empty(t, change.rmdir)
 	assert.Len(t, change.mkdir, 1)
 	assert.Len(t, change.put, 1)
 	assert.Contains(t, change.mkdir, "foo")
 	assert.Contains(t, change.put, "foo/bar.py")
 
 	f1.Remove(t)
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)
 	assert.Len(t, change.delete, 1)
 	assert.Len(t, change.rmdir, 1)
-	assert.Len(t, change.mkdir, 0)
-	assert.Len(t, change.put, 0)
+	assert.Empty(t, change.mkdir)
+	assert.Empty(t, change.put)
 	assert.Contains(t, change.delete, "foo/bar")
 	assert.Contains(t, change.rmdir, "foo")
 }
@@ -169,7 +170,7 @@ func TestPythonNotebookDiff(t *testing.T) {
 
 	// Create temp project dir
 	projectDir := t.TempDir()
-	fileSet, err := git.NewFileSet(projectDir)
+	fileSet, err := git.NewFileSetAtRoot(vfs.MustNew(projectDir))
 	require.NoError(t, err)
 	state := Snapshot{
 		SnapshotState: &SnapshotState{
@@ -183,12 +184,12 @@ func TestPythonNotebookDiff(t *testing.T) {
 	defer foo.Close(t)
 
 	// Case 1: notebook foo.py is uploaded
-	files, err := fileSet.All()
+	files, err := fileSet.Files()
 	assert.NoError(t, err)
 	foo.Overwrite(t, "# Databricks notebook source\nprint(\"abc\")")
 	change, err := state.diff(ctx, files)
 	assert.NoError(t, err)
-	assert.Len(t, change.delete, 0)
+	assert.Empty(t, change.delete)
 	assert.Len(t, change.put, 1)
 	assert.Contains(t, change.put, "foo.py")
 	assertKeysOfMap(t, state.LastModifiedTimes, []string{"foo.py"})
@@ -198,7 +199,7 @@ func TestPythonNotebookDiff(t *testing.T) {
 	// Case 2: notebook foo.py is converted to python script by removing
 	// magic keyword
 	foo.Overwrite(t, "print(\"abc\")")
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)
@@ -212,7 +213,7 @@ func TestPythonNotebookDiff(t *testing.T) {
 
 	// Case 3: Python script foo.py is converted to a databricks notebook
 	foo.Overwrite(t, "# Databricks notebook source\nprint(\"def\")")
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)
@@ -227,14 +228,14 @@ func TestPythonNotebookDiff(t *testing.T) {
 	// Case 4: Python notebook foo.py is deleted, and its remote name is used in change.delete
 	foo.Remove(t)
 	assert.NoError(t, err)
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)
 	assert.Len(t, change.delete, 1)
-	assert.Len(t, change.put, 0)
+	assert.Empty(t, change.put)
 	assert.Contains(t, change.delete, "foo")
-	assert.Len(t, state.LastModifiedTimes, 0)
+	assert.Empty(t, state.LastModifiedTimes)
 	assert.Equal(t, map[string]string{}, state.LocalToRemoteNames)
 	assert.Equal(t, map[string]string{}, state.RemoteToLocalNames)
 }
@@ -244,7 +245,7 @@ func TestErrorWhenIdenticalRemoteName(t *testing.T) {
 
 	// Create temp project dir
 	projectDir := t.TempDir()
-	fileSet, err := git.NewFileSet(projectDir)
+	fileSet, err := git.NewFileSetAtRoot(vfs.MustNew(projectDir))
 	require.NoError(t, err)
 	state := Snapshot{
 		SnapshotState: &SnapshotState{
@@ -259,18 +260,18 @@ func TestErrorWhenIdenticalRemoteName(t *testing.T) {
 	defer pythonFoo.Close(t)
 	vanillaFoo := testfile.CreateFile(t, filepath.Join(projectDir, "foo"))
 	defer vanillaFoo.Close(t)
-	files, err := fileSet.All()
+	files, err := fileSet.Files()
 	assert.NoError(t, err)
 	change, err := state.diff(ctx, files)
 	assert.NoError(t, err)
-	assert.Len(t, change.delete, 0)
+	assert.Empty(t, change.delete)
 	assert.Len(t, change.put, 2)
 	assert.Contains(t, change.put, "foo.py")
 	assert.Contains(t, change.put, "foo")
 
 	// errors out because they point to the same destination
 	pythonFoo.Overwrite(t, "# Databricks notebook source\nprint(\"def\")")
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.ErrorContains(t, err, "both foo and foo.py point to the same remote file location foo. Please remove one of them from your local project")
@@ -281,7 +282,7 @@ func TestNoErrorRenameWithIdenticalRemoteName(t *testing.T) {
 
 	// Create temp project dir
 	projectDir := t.TempDir()
-	fileSet, err := git.NewFileSet(projectDir)
+	fileSet, err := git.NewFileSetAtRoot(vfs.MustNew(projectDir))
 	require.NoError(t, err)
 	state := Snapshot{
 		SnapshotState: &SnapshotState{
@@ -295,11 +296,11 @@ func TestNoErrorRenameWithIdenticalRemoteName(t *testing.T) {
 	pythonFoo := testfile.CreateFile(t, filepath.Join(projectDir, "foo.py"))
 	defer pythonFoo.Close(t)
 	pythonFoo.Overwrite(t, "# Databricks notebook source\n")
-	files, err := fileSet.All()
+	files, err := fileSet.Files()
 	assert.NoError(t, err)
 	change, err := state.diff(ctx, files)
 	assert.NoError(t, err)
-	assert.Len(t, change.delete, 0)
+	assert.Empty(t, change.delete)
 	assert.Len(t, change.put, 1)
 	assert.Contains(t, change.put, "foo.py")
 
@@ -307,7 +308,7 @@ func TestNoErrorRenameWithIdenticalRemoteName(t *testing.T) {
 	sqlFoo := testfile.CreateFile(t, filepath.Join(projectDir, "foo.sql"))
 	defer sqlFoo.Close(t)
 	sqlFoo.Overwrite(t, "-- Databricks notebook source\n")
-	files, err = fileSet.All()
+	files, err = fileSet.Files()
 	assert.NoError(t, err)
 	change, err = state.diff(ctx, files)
 	assert.NoError(t, err)

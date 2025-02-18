@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/databricks/cli/bundle"
+	"github.com/databricks/cli/libs/diag"
 	"golang.org/x/exp/maps"
 )
 
@@ -14,6 +15,7 @@ type selectTarget struct {
 }
 
 // SelectTarget merges the specified target into the root configuration.
+// After merging, it removes the 'Targets' section from the configuration.
 func SelectTarget(name string) bundle.Mutator {
 	return &selectTarget{
 		name: name,
@@ -24,31 +26,33 @@ func (m *selectTarget) Name() string {
 	return fmt.Sprintf("SelectTarget(%s)", m.name)
 }
 
-func (m *selectTarget) Apply(_ context.Context, b *bundle.Bundle) error {
+func (m *selectTarget) Apply(_ context.Context, b *bundle.Bundle) diag.Diagnostics {
 	if b.Config.Targets == nil {
-		return fmt.Errorf("no targets defined")
+		return diag.Errorf("no targets defined")
 	}
 
 	// Get specified target
 	target, ok := b.Config.Targets[m.name]
 	if !ok {
-		return fmt.Errorf("%s: no such target. Available targets: %s", m.name, strings.Join(maps.Keys(b.Config.Targets), ", "))
+		return diag.Errorf("%s: no such target. Available targets: %s", m.name, strings.Join(maps.Keys(b.Config.Targets), ", "))
 	}
 
 	// Merge specified target into root configuration structure.
-	err := b.Config.MergeTargetOverrides(target)
+	err := b.Config.MergeTargetOverrides(m.name)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	// Store specified target in configuration for reference.
+	b.Target = target
 	b.Config.Bundle.Target = m.name
 
 	// We do this for backward compatibility.
 	// TODO: remove when Environments section is not supported anymore.
 	b.Config.Bundle.Environment = b.Config.Bundle.Target
 
-	// Clear targets after loading.
+	// Cleanup the original targets and environments sections since they
+	// show up in the JSON output of the 'summary' and 'validate' commands.
 	b.Config.Targets = nil
 	b.Config.Environments = nil
 

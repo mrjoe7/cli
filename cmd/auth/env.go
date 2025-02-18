@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/databricks/cli/libs/databrickscfg"
+	"github.com/databricks/cli/libs/databrickscfg/profile"
 	"github.com/databricks/databricks-sdk-go/config"
 	"github.com/spf13/cobra"
 	"gopkg.in/ini.v1"
@@ -23,9 +23,9 @@ func canonicalHost(host string) (string, error) {
 	}
 	// If the host is empty, assume the scheme wasn't included.
 	if parsedHost.Host == "" {
-		return fmt.Sprintf("https://%s", host), nil
+		return "https://" + host, nil
 	}
-	return fmt.Sprintf("https://%s", parsedHost.Host), nil
+	return "https://" + parsedHost.Host, nil
 }
 
 var ErrNoMatchingProfiles = errors.New("no matching profiles found")
@@ -70,7 +70,7 @@ func resolveSection(cfg *config.Config, iniFile *config.File) (*ini.Section, err
 }
 
 func loadFromDatabricksCfg(ctx context.Context, cfg *config.Config) error {
-	iniFile, err := databrickscfg.Get(ctx)
+	iniFile, err := profile.DefaultProfiler.Get(ctx)
 	if errors.Is(err, fs.ErrNotExist) {
 		// it's fine not to have ~/.databrickscfg
 		return nil
@@ -138,7 +138,7 @@ func newEnvCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		cmd.OutOrStdout().Write(raw)
+		_, _ = cmd.OutOrStdout().Write(raw)
 		return nil
 	}
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"github.com/databricks/cli/bundle/config/resources"
+	"github.com/databricks/cli/bundle/config/variable"
 	"github.com/databricks/databricks-sdk-go/service/jobs"
 )
 
@@ -19,8 +20,15 @@ type Target struct {
 	// development purposes.
 	Mode Mode `json:"mode,omitempty"`
 
-	// Overrides the compute used for jobs and other supported assets.
-	ComputeID string `json:"compute_id,omitempty"`
+	// Mutator configurations that e.g. change the
+	// name prefix of deployed resources.
+	Presets Presets `json:"presets,omitempty"`
+
+	// DEPRECATED: Overrides the compute used for jobs and other supported assets.
+	ComputeId string `json:"compute_id,omitempty"`
+
+	// Overrides the cluster used for jobs and other supported assets.
+	ClusterId string `json:"cluster_id,omitempty"`
 
 	Bundle *Bundle `json:"bundle,omitempty"`
 
@@ -30,10 +38,29 @@ type Target struct {
 
 	Resources *Resources `json:"resources,omitempty"`
 
-	// Override default values for defined variables
+	// Override default values or lookup name for defined variables
 	// Does not permit defining new variables or redefining existing ones
 	// in the scope of an target
-	Variables map[string]string `json:"variables,omitempty"`
+	//
+	// There are two valid ways to define a variable override in a target:
+	// 1. Direct value override. We normalize this to the variable.Variable
+	//    struct format when loading the configuration YAML:
+	//
+	//   variables:
+	//     foo: "value"
+	//
+	// 2. Override matching the variable.Variable struct.
+	//
+	//   variables:
+	//     foo:
+	//       default: "value"
+	//
+	// OR
+	//
+	//   variables:
+	//     foo:
+	//       lookup: "resource_name"
+	Variables map[string]*variable.TargetVariable `json:"variables,omitempty"`
 
 	Git Git `json:"git,omitempty"`
 

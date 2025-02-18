@@ -8,15 +8,16 @@ import (
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
-	"github.com/databricks/cli/bundle/config/paths"
 	"github.com/databricks/cli/bundle/config/resources"
+	"github.com/databricks/cli/bundle/internal/bundletest"
+	"github.com/databricks/cli/libs/dyn"
 	"github.com/databricks/databricks-sdk-go/service/compute"
 	"github.com/databricks/databricks-sdk-go/service/pipelines"
 	"github.com/stretchr/testify/require"
 )
 
 func touchEmptyFile(t *testing.T, path string) {
-	err := os.MkdirAll(filepath.Dir(path), 0700)
+	err := os.MkdirAll(filepath.Dir(path), 0o700)
 	require.NoError(t, err)
 	f, err := os.Create(path)
 	require.NoError(t, err)
@@ -35,17 +36,18 @@ func TestExpandGlobPathsInPipelines(t *testing.T) {
 	touchEmptyFile(t, filepath.Join(dir, "test1.py"))
 	touchEmptyFile(t, filepath.Join(dir, "test/test2.py"))
 	touchEmptyFile(t, filepath.Join(dir, "test/test3.py"))
+	touchEmptyFile(t, filepath.Join(dir, "relative/test4.py"))
+	touchEmptyFile(t, filepath.Join(dir, "relative/test5.py"))
+	touchEmptyFile(t, filepath.Join(dir, "skip/test6.py"))
+	touchEmptyFile(t, filepath.Join(dir, "skip/test7.py"))
 
 	b := &bundle.Bundle{
+		BundleRootPath: dir,
 		Config: config.Root{
-			Path: dir,
 			Resources: config.Resources{
 				Pipelines: map[string]*resources.Pipeline{
 					"pipeline": {
-						Paths: paths.Paths{
-							ConfigFilePath: filepath.Join(dir, "resource.yml"),
-						},
-						PipelineSpec: &pipelines.PipelineSpec{
+						CreatePipeline: &pipelines.CreatePipeline{
 							Libraries: []pipelines.PipelineLibrary{
 								{
 									Notebook: &pipelines.NotebookLibrary{
@@ -57,7 +59,13 @@ func TestExpandGlobPathsInPipelines(t *testing.T) {
 								},
 								{
 									File: &pipelines.FileLibrary{
-										Path: "./**/*.py",
+										Path: "./test/*.py",
+									},
+								},
+								{
+									// This value is annotated to be defined in the "./relative" directory.
+									File: &pipelines.FileLibrary{
+										Path: "./*.py",
 									},
 								},
 								{
@@ -85,6 +93,11 @@ func TestExpandGlobPathsInPipelines(t *testing.T) {
 										Path: "/Repos/somerepo/test.ipynb",
 									},
 								},
+								{
+									Notebook: &pipelines.NotebookLibrary{
+										Path: "./non-existent.ipynb",
+									},
+								},
 							},
 						},
 					},
@@ -93,18 +106,25 @@ func TestExpandGlobPathsInPipelines(t *testing.T) {
 		},
 	}
 
+	bundletest.SetLocation(b, ".", []dyn.Location{{File: filepath.Join(dir, "resource.yml")}})
+	bundletest.SetLocation(b, "resources.pipelines.pipeline.libraries[3]", []dyn.Location{{File: filepath.Join(dir, "relative", "resource.yml")}})
+
 	m := ExpandPipelineGlobPaths()
-	err := bundle.Apply(context.Background(), b, m)
-	require.NoError(t, err)
+	diags := bundle.Apply(context.Background(), b, m)
+	require.NoError(t, diags.Error())
 
 	libraries := b.Config.Resources.Pipelines["pipeline"].Libraries
-	require.Len(t, libraries, 10)
+	require.Len(t, libraries, 13)
 
 	// Making sure glob patterns are expanded correctly
 	require.True(t, containsNotebook(libraries, filepath.Join("test", "test2.ipynb")))
 	require.True(t, containsNotebook(libraries, filepath.Join("test", "test3.ipynb")))
 	require.True(t, containsFile(libraries, filepath.Join("test", "test2.py")))
 	require.True(t, containsFile(libraries, filepath.Join("test", "test3.py")))
+
+	// These patterns are defined relative to "./relative"
+	require.True(t, containsFile(libraries, "test4.py"))
+	require.True(t, containsFile(libraries, "test5.py"))
 
 	// Making sure exact file references work as well
 	require.True(t, containsNotebook(libraries, "test1.ipynb"))
@@ -117,6 +137,7 @@ func TestExpandGlobPathsInPipelines(t *testing.T) {
 	// Making sure other libraries are not replaced
 	require.True(t, containsJar(libraries, "./*.jar"))
 	require.True(t, containsMaven(libraries, "org.jsoup:jsoup:1.7.2"))
+	require.True(t, containsNotebook(libraries, "./non-existent.ipynb"))
 }
 
 func containsNotebook(libraries []pipelines.PipelineLibrary, path string) bool {

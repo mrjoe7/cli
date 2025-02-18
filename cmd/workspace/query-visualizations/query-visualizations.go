@@ -19,10 +19,10 @@ var cmdOverrides []func(*cobra.Command)
 func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query-visualizations",
-		Short: `This is an evolving API that facilitates the addition and removal of vizualisations from existing queries within the Databricks Workspace.`,
+		Short: `This is an evolving API that facilitates the addition and removal of visualizations from existing queries in the Databricks Workspace.`,
 		Long: `This is an evolving API that facilitates the addition and removal of
-  vizualisations from existing queries within the Databricks Workspace. Data
-  structures may change over time.`,
+  visualizations from existing queries in the Databricks Workspace. Data
+  structures can change over time.`,
 		GroupID: "sql",
 		Annotations: map[string]string{
 			"package": "sql",
@@ -31,6 +31,11 @@ func New() *cobra.Command {
 		// This service is being previewed; hide from help output.
 		Hidden: true,
 	}
+
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newUpdate())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -46,23 +51,32 @@ func New() *cobra.Command {
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var createOverrides []func(
 	*cobra.Command,
-	*sql.CreateQueryVisualizationRequest,
+	*sql.CreateVisualizationRequest,
 )
 
 func newCreate() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var createReq sql.CreateQueryVisualizationRequest
+	var createReq sql.CreateVisualizationRequest
 	var createJson flags.JsonFlag
 
 	// TODO: short flags
 	cmd.Flags().Var(&createJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
+	// TODO: complex arg: visualization
+
 	cmd.Use = "create"
-	cmd.Short = `Add visualization to a query.`
-	cmd.Long = `Add visualization to a query.`
+	cmd.Short = `Add a visualization to a query.`
+	cmd.Long = `Add a visualization to a query.
+  
+  Adds a visualization to a query.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		check := root.ExactArgs(0)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -70,12 +84,16 @@ func newCreate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		response, err := w.QueryVisualizations.Create(ctx, createReq)
@@ -97,36 +115,32 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var deleteOverrides []func(
 	*cobra.Command,
-	*sql.DeleteQueryVisualizationRequest,
+	*sql.DeleteVisualizationRequest,
 )
 
 func newDelete() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var deleteReq sql.DeleteQueryVisualizationRequest
+	var deleteReq sql.DeleteVisualizationRequest
 
 	// TODO: short flags
 
 	cmd.Use = "delete ID"
-	cmd.Short = `Remove visualization.`
-	cmd.Long = `Remove visualization.`
+	cmd.Short = `Remove a visualization.`
+	cmd.Long = `Remove a visualization.
+  
+  Removes a visualization.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -156,35 +170,59 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start update command
 
 // Slice with functions to override default command behavior.
 // Functions can be added from the `init()` function in manually curated files in this directory.
 var updateOverrides []func(
 	*cobra.Command,
-	*sql.Visualization,
+	*sql.UpdateVisualizationRequest,
 )
 
 func newUpdate() *cobra.Command {
 	cmd := &cobra.Command{}
 
-	var updateReq sql.Visualization
+	var updateReq sql.UpdateVisualizationRequest
 	var updateJson flags.JsonFlag
 
 	// TODO: short flags
 	cmd.Flags().Var(&updateJson, "json", `either inline JSON string or @path/to/file.json with request body`)
 
-	cmd.Use = "update"
-	cmd.Short = `Edit existing visualization.`
-	cmd.Long = `Edit existing visualization.`
+	// TODO: complex arg: visualization
+
+	cmd.Use = "update ID UPDATE_MASK"
+	cmd.Short = `Update a visualization.`
+	cmd.Long = `Update a visualization.
+  
+  Updates a visualization.
+
+  Arguments:
+    ID: 
+    UPDATE_MASK: The field mask must be a single string, with multiple fields separated by
+      commas (no spaces). The field path is relative to the resource object,
+      using a dot (.) to navigate sub-fields (e.g., author.given_name).
+      Specification of elements in sequence or map fields is not allowed, as
+      only the entire collection field can be specified. Field names must
+      exactly match the resource field names.
+      
+      A field mask of * indicates full replacement. It’s recommended to
+      always explicitly list the fields being updated and avoid using *
+      wildcards, as it can lead to unintended results if the API changes in the
+      future.`
 
 	cmd.Annotations = make(map[string]string)
+
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("json") {
+			err := root.ExactArgs(1)(cmd, args)
+			if err != nil {
+				return fmt.Errorf("when --json flag is specified, provide only ID as positional arguments. Provide 'update_mask' in your JSON input")
+			}
+			return nil
+		}
+		check := root.ExactArgs(2)
+		return check(cmd, args)
+	}
 
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
@@ -192,12 +230,20 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
 			}
-		} else {
-			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		updateReq.Id = args[0]
+		if !cmd.Flags().Changed("json") {
+			updateReq.UpdateMask = args[1]
 		}
 
 		response, err := w.QueryVisualizations.Update(ctx, updateReq)
@@ -217,12 +263,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // end service QueryVisualizations

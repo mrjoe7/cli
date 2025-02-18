@@ -2,17 +2,21 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
-	stdsync "sync"
 	"time"
 
 	"github.com/databricks/cli/bundle"
+	"github.com/databricks/cli/bundle/deploy/files"
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/flags"
+	"github.com/databricks/cli/libs/git"
+	"github.com/databricks/cli/libs/log"
 	"github.com/databricks/cli/libs/sync"
+	"github.com/databricks/cli/libs/vfs"
 	"github.com/spf13/cobra"
 )
 
@@ -26,31 +30,18 @@ type syncFlags struct {
 
 func (f *syncFlags) syncOptionsFromBundle(cmd *cobra.Command, args []string, b *bundle.Bundle) (*sync.SyncOptions, error) {
 	if len(args) > 0 {
-		return nil, fmt.Errorf("SRC and DST are not configurable in the context of a bundle")
+		return nil, errors.New("SRC and DST are not configurable in the context of a bundle")
 	}
 
-	cacheDir, err := b.CacheDir(cmd.Context())
+	opts, err := files.GetSyncOptions(cmd.Context(), bundle.ReadOnly(b))
 	if err != nil {
-		return nil, fmt.Errorf("cannot get bundle cache directory: %w", err)
+		return nil, fmt.Errorf("cannot get sync options: %w", err)
 	}
 
-	includes, err := b.GetSyncIncludePatterns(cmd.Context())
-	if err != nil {
-		return nil, fmt.Errorf("cannot get list of sync includes: %w", err)
-	}
-
-	opts := sync.SyncOptions{
-		LocalPath:    b.Config.Path,
-		RemotePath:   b.Config.Workspace.FilePath,
-		Include:      includes,
-		Exclude:      b.Config.Sync.Exclude,
-		Full:         f.full,
-		PollInterval: f.interval,
-
-		SnapshotBasePath: cacheDir,
-		WorkspaceClient:  b.WorkspaceClient(),
-	}
-	return &opts, nil
+	opts.Full = f.full
+	opts.PollInterval = f.interval
+	opts.WorktreeRoot = b.WorktreeRoot
+	return opts, nil
 }
 
 func (f *syncFlags) syncOptionsFromArgs(cmd *cobra.Command, args []string) (*sync.SyncOptions, error) {
@@ -58,8 +49,45 @@ func (f *syncFlags) syncOptionsFromArgs(cmd *cobra.Command, args []string) (*syn
 		return nil, flag.ErrHelp
 	}
 
+	var outputFunc func(context.Context, <-chan sync.Event, io.Writer)
+	switch f.output {
+	case flags.OutputText:
+		outputFunc = sync.TextOutput
+	case flags.OutputJSON:
+		outputFunc = sync.JsonOutput
+	}
+
+	var outputHandler sync.OutputHandler
+	if outputFunc != nil {
+		outputHandler = func(ctx context.Context, events <-chan sync.Event) {
+			outputFunc(ctx, events, cmd.OutOrStdout())
+		}
+	}
+
+	ctx := cmd.Context()
+	client := root.WorkspaceClient(ctx)
+
+	localRoot := vfs.MustNew(args[0])
+	info, err := git.FetchRepositoryInfo(ctx, localRoot.Native(), client)
+	if err != nil {
+		log.Warnf(ctx, "Failed to read git info: %s", err)
+	}
+
+	var worktreeRoot vfs.Path
+
+	if info.WorktreeRoot == "" {
+		worktreeRoot = localRoot
+	} else {
+		worktreeRoot = vfs.MustNew(info.WorktreeRoot)
+	}
+
 	opts := sync.SyncOptions{
-		LocalPath:    args[0],
+		WorktreeRoot: worktreeRoot,
+		LocalRoot:    localRoot,
+		Paths:        []string{"."},
+		Include:      nil,
+		Exclude:      nil,
+
 		RemotePath:   args[1],
 		Full:         f.full,
 		PollInterval: f.interval,
@@ -69,16 +97,19 @@ func (f *syncFlags) syncOptionsFromArgs(cmd *cobra.Command, args []string) (*syn
 		// The sync code will automatically create this directory if it doesn't
 		// exist and add it to the `.gitignore` file in the root.
 		SnapshotBasePath: filepath.Join(args[0], ".databricks"),
-		WorkspaceClient:  root.WorkspaceClient(cmd.Context()),
+		WorkspaceClient:  client,
+
+		OutputHandler: outputHandler,
 	}
 	return &opts, nil
 }
 
 func New() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sync [flags] SRC DST",
-		Short: "Synchronize a local directory to a workspace directory",
-		Args:  cobra.MaximumNArgs(2),
+		Use:     "sync [flags] SRC DST",
+		Short:   "Synchronize a local directory to a workspace directory",
+		Args:    root.MaximumNArgs(2),
+		GroupID: "development",
 	}
 
 	f := syncFlags{
@@ -125,32 +156,14 @@ func New() *cobra.Command {
 		if err != nil {
 			return err
 		}
-
-		var outputFunc func(context.Context, <-chan sync.Event, io.Writer)
-		switch f.output {
-		case flags.OutputText:
-			outputFunc = textOutput
-		case flags.OutputJSON:
-			outputFunc = jsonOutput
-		}
-
-		var wg stdsync.WaitGroup
-		if outputFunc != nil {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				outputFunc(ctx, s.Events(), cmd.OutOrStdout())
-			}()
-		}
+		defer s.Close()
 
 		if f.watch {
 			err = s.RunContinuous(ctx)
 		} else {
-			err = s.RunOnce(ctx)
+			_, err = s.RunOnce(ctx)
 		}
 
-		s.Close()
-		wg.Wait()
 		return err
 	}
 

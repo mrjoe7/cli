@@ -5,12 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/bundle/config"
 	"github.com/databricks/cli/libs/cmdio"
+	"github.com/databricks/cli/libs/diag"
+	"github.com/databricks/cli/libs/exec"
 	"github.com/databricks/cli/libs/log"
 )
 
@@ -28,10 +29,15 @@ func (m *script) Name() string {
 	return fmt.Sprintf("scripts.%s", m.scriptHook)
 }
 
-func (m *script) Apply(ctx context.Context, b *bundle.Bundle) error {
-	cmd, out, err := executeHook(ctx, b, m.scriptHook)
+func (m *script) Apply(ctx context.Context, b *bundle.Bundle) diag.Diagnostics {
+	executor, err := exec.NewCommandExecutor(b.BundleRootPath)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
+	}
+
+	cmd, out, err := executeHook(ctx, executor, b, m.scriptHook)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("failed to execute script: %w", err))
 	}
 	if cmd == nil {
 		log.Debugf(ctx, "No script defined for %s, skipping", m.scriptHook)
@@ -47,35 +53,26 @@ func (m *script) Apply(ctx context.Context, b *bundle.Bundle) error {
 		line, err = reader.ReadString('\n')
 	}
 
-	return cmd.Wait()
+	err = cmd.Wait()
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("failed to execute script: %w", err))
+	}
+
+	return nil
 }
 
-func executeHook(ctx context.Context, b *bundle.Bundle, hook config.ScriptHook) (*exec.Cmd, io.Reader, error) {
+func executeHook(ctx context.Context, executor *exec.Executor, b *bundle.Bundle, hook config.ScriptHook) (exec.Command, io.Reader, error) {
 	command := getCommmand(b, hook)
 	if command == "" {
 		return nil, nil, nil
 	}
 
-	interpreter, err := findInterpreter()
+	cmd, err := executor.StartCommand(ctx, string(command))
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// TODO: switch to process.Background(...)
-	cmd := exec.CommandContext(ctx, interpreter, "-c", string(command))
-	cmd.Dir = b.Config.Path
-
-	outPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	errPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return cmd, io.MultiReader(outPipe, errPipe), cmd.Start()
+	return cmd, io.MultiReader(cmd.Stdout(), cmd.Stderr()), nil
 }
 
 func getCommmand(b *bundle.Bundle, hook config.ScriptHook) config.Command {
@@ -84,9 +81,4 @@ func getCommmand(b *bundle.Bundle, hook config.ScriptHook) config.Command {
 	}
 
 	return b.Config.Experimental.Scripts[hook]
-}
-
-func findInterpreter() (string, error) {
-	// At the moment we just return 'sh' on all platforms and use it to execute scripts
-	return "sh", nil
 }

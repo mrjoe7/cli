@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"os"
 	"regexp"
 	"text/template"
 
 	"github.com/databricks/cli/cmd/root"
-	"github.com/databricks/cli/libs/auth"
+	"github.com/databricks/cli/libs/iamutil"
+	"github.com/databricks/databricks-sdk-go/apierr"
 	"github.com/databricks/databricks-sdk-go/service/iam"
+
+	"github.com/google/uuid"
 )
 
 type ErrFail struct {
@@ -27,8 +31,18 @@ type pair struct {
 	v any
 }
 
-var cachedUser *iam.User
-var cachedIsServicePrincipal *bool
+var (
+	cachedUser               *iam.User
+	cachedIsServicePrincipal *bool
+	cachedCatalog            *string
+)
+
+// UUID that is stable for the duration of the template execution. This can be used
+// to populate the `bundle.uuid` field in databricks.yml by template authors.
+//
+// It's automatically logged in our telemetry logs when `databricks bundle init`
+// is run and can be used to attribute DBU revenue to bundle templates.
+var bundleUuid = uuid.New().String()
 
 func loadHelpers(ctx context.Context) template.FuncMap {
 	w := root.WorkspaceClient(ctx)
@@ -43,6 +57,17 @@ func loadHelpers(ctx context.Context) template.FuncMap {
 		// Alias for https://pkg.go.dev/regexp#Compile. Allows usage of all methods of regexp.Regexp
 		"regexp": func(expr string) (*regexp.Regexp, error) {
 			return regexp.Compile(expr)
+		},
+		// Alias for https://pkg.go.dev/math/rand#Intn. Returns, as an int, a non-negative pseudo-random number in the half-open interval [0,n).
+		"random_int": func(n int) int {
+			return rand.Intn(n)
+		},
+		// Alias for https://pkg.go.dev/github.com/google/uuid#New. Returns, as a string, a UUID which is a 128 bit (16 byte) Universal Unique IDentifier as defined in RFC 4122.
+		"uuid": func() string {
+			return uuid.New().String()
+		},
+		"bundle_uuid": func() string {
+			return bundleUuid
 		},
 		// A key value pair. This is used with the map function to generate maps
 		// to use inside a template
@@ -98,6 +123,35 @@ func loadHelpers(ctx context.Context) template.FuncMap {
 			}
 			return result, nil
 		},
+		"short_name": func() (string, error) {
+			if cachedUser == nil {
+				var err error
+				cachedUser, err = w.CurrentUser.Me(ctx)
+				if err != nil {
+					return "", err
+				}
+			}
+			return iamutil.GetShortUserName(cachedUser), nil
+		},
+		// Get the default workspace catalog. If there is no default, or if
+		// Unity Catalog is not enabled, return an empty string.
+		"default_catalog": func() (string, error) {
+			if cachedCatalog == nil {
+				metastore, err := w.Metastores.Current(ctx)
+				if err != nil {
+					var aerr *apierr.APIError
+					if errors.As(err, &aerr) && (aerr.ErrorCode == "PERMISSION_DENIED" || aerr.ErrorCode == "METASTORE_DOES_NOT_EXIST") {
+						// Ignore: access denied or workspace doesn't have a metastore assigned
+						empty_default := ""
+						cachedCatalog = &empty_default
+						return "", nil
+					}
+					return "", err
+				}
+				cachedCatalog = &metastore.DefaultCatalogName
+			}
+			return *cachedCatalog, nil
+		},
 		"is_service_principal": func() (bool, error) {
 			if cachedIsServicePrincipal != nil {
 				return *cachedIsServicePrincipal, nil
@@ -109,7 +163,7 @@ func loadHelpers(ctx context.Context) template.FuncMap {
 					return false, err
 				}
 			}
-			result := auth.IsServicePrincipal(cachedUser.Id)
+			result := iamutil.IsServicePrincipal(cachedUser)
 			cachedIsServicePrincipal = &result
 			return result, nil
 		},

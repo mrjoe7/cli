@@ -2,6 +2,8 @@ package run
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -14,76 +16,9 @@ import (
 	"github.com/databricks/cli/libs/log"
 	"github.com/databricks/databricks-sdk-go/service/jobs"
 	"github.com/fatih/color"
-	flag "github.com/spf13/pflag"
+	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
-
-// JobOptions defines options for running a job.
-type JobOptions struct {
-	dbtCommands       []string
-	jarParams         []string
-	notebookParams    map[string]string
-	pipelineParams    map[string]string
-	pythonNamedParams map[string]string
-	pythonParams      []string
-	sparkSubmitParams []string
-	sqlParams         map[string]string
-}
-
-func (o *JobOptions) Define(fs *flag.FlagSet) {
-	fs.StringSliceVar(&o.dbtCommands, "dbt-commands", nil, "A list of commands to execute for jobs with DBT tasks.")
-	fs.StringSliceVar(&o.jarParams, "jar-params", nil, "A list of parameters for jobs with Spark JAR tasks.")
-	fs.StringToStringVar(&o.notebookParams, "notebook-params", nil, "A map from keys to values for jobs with notebook tasks.")
-	fs.StringToStringVar(&o.pipelineParams, "pipeline-params", nil, "A map from keys to values for jobs with pipeline tasks.")
-	fs.StringToStringVar(&o.pythonNamedParams, "python-named-params", nil, "A map from keys to values for jobs with Python wheel tasks.")
-	fs.StringSliceVar(&o.pythonParams, "python-params", nil, "A list of parameters for jobs with Python tasks.")
-	fs.StringSliceVar(&o.sparkSubmitParams, "spark-submit-params", nil, "A list of parameters for jobs with Spark submit tasks.")
-	fs.StringToStringVar(&o.sqlParams, "sql-params", nil, "A map from keys to values for jobs with SQL tasks.")
-}
-
-func (o *JobOptions) validatePipelineParams() (*jobs.PipelineParams, error) {
-	if len(o.pipelineParams) == 0 {
-		return nil, nil
-	}
-
-	var defaultErr = fmt.Errorf("job run argument --pipeline-params only supports `full_refresh=<bool>`")
-	v, ok := o.pipelineParams["full_refresh"]
-	if !ok {
-		return nil, defaultErr
-	}
-
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return nil, defaultErr
-	}
-
-	pipelineParams := &jobs.PipelineParams{
-		FullRefresh: b,
-	}
-
-	return pipelineParams, nil
-}
-
-func (o *JobOptions) toPayload(jobID int64) (*jobs.RunNow, error) {
-	pipelineParams, err := o.validatePipelineParams()
-	if err != nil {
-		return nil, err
-	}
-
-	payload := &jobs.RunNow{
-		JobId: jobID,
-
-		DbtCommands:       o.dbtCommands,
-		JarParams:         o.jarParams,
-		NotebookParams:    o.notebookParams,
-		PipelineParams:    pipelineParams,
-		PythonNamedParams: o.pythonNamedParams,
-		PythonParams:      o.pythonParams,
-		SparkSubmitParams: o.sparkSubmitParams,
-		SqlParams:         o.sqlParams,
-	}
-
-	return payload, nil
-}
 
 // Default timeout for waiting for a job run to complete.
 var jobRunTimeout time.Duration = 24 * time.Hour
@@ -209,7 +144,7 @@ func logProgressCallback(ctx context.Context, progressLogger *cmdio.Logger) func
 		progressLogger.Log(event)
 
 		// log progress events in using the default logger
-		log.Infof(ctx, event.String())
+		log.Info(ctx, event.String())
 	}
 }
 
@@ -221,8 +156,13 @@ func (r *jobRunner) Run(ctx context.Context, opts *Options) (output.RunOutput, e
 
 	runId := new(int64)
 
+	err = r.convertPythonParams(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	// construct request payload from cmd line flags args
-	req, err := opts.Job.toPayload(jobID)
+	req, err := opts.Job.toPayload(r.job, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,13 +182,13 @@ func (r *jobRunner) Run(ctx context.Context, opts *Options) (output.RunOutput, e
 	// callback to log progress events. Called on every poll request
 	progressLogger, ok := cmdio.FromContext(ctx)
 	if !ok {
-		return nil, fmt.Errorf("no progress logger found")
+		return nil, errors.New("no progress logger found")
 	}
 	logProgress := logProgressCallback(ctx, progressLogger)
 
 	waiter, err := w.Jobs.RunNow(ctx, *req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot start job")
+		return nil, errors.New("cannot start job")
 	}
 
 	if opts.NoWait {
@@ -264,7 +204,7 @@ func (r *jobRunner) Run(ctx context.Context, opts *Options) (output.RunOutput, e
 		logDebug(r)
 		logProgress(r)
 	}).GetWithTimeout(jobRunTimeout)
-	if err != nil && runId != nil {
+	if err != nil {
 		r.logFailedTasks(ctx, *runId)
 	}
 	if err != nil {
@@ -298,4 +238,112 @@ func (r *jobRunner) Run(ctx context.Context, opts *Options) (output.RunOutput, e
 	}
 
 	return nil, err
+}
+
+func (r *jobRunner) convertPythonParams(opts *Options) error {
+	if r.bundle.Config.Experimental != nil && !r.bundle.Config.Experimental.PythonWheelWrapper {
+		return nil
+	}
+
+	needConvert := false
+	for _, task := range r.job.Tasks {
+		if task.PythonWheelTask != nil {
+			needConvert = true
+			break
+		}
+	}
+
+	if !needConvert {
+		return nil
+	}
+
+	if len(opts.Job.pythonParams) == 0 {
+		return nil
+	}
+
+	if opts.Job.notebookParams == nil {
+		opts.Job.notebookParams = make(map[string]string)
+	}
+
+	if len(opts.Job.pythonParams) > 0 {
+		if _, ok := opts.Job.notebookParams["__python_params"]; ok {
+			return errors.New("can't use __python_params as notebook param, the name is reserved for internal use")
+		}
+		p, err := json.Marshal(opts.Job.pythonParams)
+		if err != nil {
+			return err
+		}
+		opts.Job.notebookParams["__python_params"] = string(p)
+	}
+
+	return nil
+}
+
+func (r *jobRunner) Cancel(ctx context.Context) error {
+	w := r.bundle.WorkspaceClient()
+	jobID, err := strconv.ParseInt(r.job.ID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("job ID is not an integer: %s", r.job.ID)
+	}
+
+	runs, err := w.Jobs.ListRunsAll(ctx, jobs.ListRunsRequest{
+		ActiveOnly: true,
+		JobId:      jobID,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(runs) == 0 {
+		return nil
+	}
+
+	errGroup, errCtx := errgroup.WithContext(ctx)
+	for _, run := range runs {
+		runId := run.RunId
+		errGroup.Go(func() error {
+			wait, err := w.Jobs.CancelRun(errCtx, jobs.CancelRun{
+				RunId: runId,
+			})
+			if err != nil {
+				return err
+			}
+			// Waits for the Terminated or Skipped state
+			_, err = wait.GetWithTimeout(jobRunTimeout)
+			return err
+		})
+	}
+
+	return errGroup.Wait()
+}
+
+func (r *jobRunner) Restart(ctx context.Context, opts *Options) (output.RunOutput, error) {
+	// We don't need to cancel existing runs if the job is continuous and unpaused.
+	// the /jobs/run-now API will automatically cancel any existing runs before starting a new one.
+	//
+	// /jobs/run-now will not cancel existing runs if the job is continuous and paused.
+	// New job runs will be queued instead and will wait for existing runs to finish.
+	// In this case, we need to cancel the existing runs before starting a new one.
+	continuous := r.job.JobSettings.Continuous
+	if continuous != nil && continuous.PauseStatus == jobs.PauseStatusUnpaused {
+		return r.Run(ctx, opts)
+	}
+
+	s := cmdio.Spinner(ctx)
+	s <- "Cancelling all active job runs"
+	err := r.Cancel(ctx)
+	close(s)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.Run(ctx, opts)
+}
+
+func (r *jobRunner) ParseArgs(args []string, opts *Options) error {
+	return r.posArgsHandler().ParseArgs(args, opts)
+}
+
+func (r *jobRunner) CompleteArgs(args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return r.posArgsHandler().CompleteArgs(args, toComplete)
 }

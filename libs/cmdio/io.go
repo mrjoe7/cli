@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/databricks/cli/libs/env"
 	"github.com/databricks/cli/libs/flags"
 	"github.com/manifoldco/promptui"
 	"github.com/mattn/go-isatty"
@@ -21,27 +22,29 @@ import (
 type cmdIO struct {
 	// states if we are in the interactive mode
 	// e.g. if stdout is a terminal
-	interactive  bool
-	outputFormat flags.Output
-	template     string
-	in           io.Reader
-	out          io.Writer
-	err          io.Writer
+	interactive    bool
+	outputFormat   flags.Output
+	headerTemplate string
+	template       string
+	in             io.Reader
+	out            io.Writer
+	err            io.Writer
 }
 
-func NewIO(outputFormat flags.Output, in io.Reader, out io.Writer, err io.Writer, template string) *cmdIO {
+func NewIO(ctx context.Context, outputFormat flags.Output, in io.Reader, out, err io.Writer, headerTemplate, template string) *cmdIO {
 	// The check below is similar to color.NoColor but uses the specified err writer.
-	dumb := os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"
+	dumb := env.Get(ctx, "NO_COLOR") != "" || env.Get(ctx, "TERM") == "dumb"
 	if f, ok := err.(*os.File); ok && !dumb {
 		dumb = !isatty.IsTerminal(f.Fd()) && !isatty.IsCygwinTerminal(f.Fd())
 	}
 	return &cmdIO{
-		interactive:  !dumb,
-		outputFormat: outputFormat,
-		template:     template,
-		in:           in,
-		out:          out,
-		err:          err,
+		interactive:    !dumb,
+		outputFormat:   outputFormat,
+		headerTemplate: headerTemplate,
+		template:       template,
+		in:             in,
+		out:            out,
+		err:            err,
 	}
 }
 
@@ -88,61 +91,37 @@ func (c *cmdIO) IsTTY() bool {
 	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
-func Render(ctx context.Context, v any) error {
-	c := fromContext(ctx)
-	return RenderWithTemplate(ctx, v, c.template)
+func IsPromptSupported(ctx context.Context) bool {
+	// We do not allow prompting in non-interactive mode and in Git Bash on Windows.
+	// Likely due to fact that Git Bash does not (correctly support ANSI escape sequences,
+	// we cannot use promptui package there.
+	// See known issues:
+	// - https://github.com/manifoldco/promptui/issues/208
+	// - https://github.com/chzyer/readline/issues/191
+	// We also do not allow prompting in non-interactive mode,
+	// because it's not possible to read from stdin in non-interactive mode.
+	return (IsInteractive(ctx) || (IsOutTTY(ctx) && IsInTTY(ctx))) && !IsGitBash(ctx)
 }
 
-func RenderWithTemplate(ctx context.Context, v any, template string) error {
-	// TODO: add terminal width & white/dark theme detection
-	c := fromContext(ctx)
-	switch c.outputFormat {
-	case flags.OutputJSON:
-		return renderJson(c.out, v)
-	case flags.OutputText:
-		if template != "" {
-			return renderTemplate(c.out, template, v)
-		}
-		return renderJson(c.out, v)
-	default:
-		return fmt.Errorf("invalid output format: %s", c.outputFormat)
+func IsGitBash(ctx context.Context) bool {
+	// Check if the MSYSTEM environment variable is set to "MINGW64"
+	msystem := env.Get(ctx, "MSYSTEM")
+	if strings.EqualFold(msystem, "MINGW64") {
+		// Check for typical Git Bash env variable for prompts
+		ps1 := env.Get(ctx, "PS1")
+		return strings.Contains(ps1, "MINGW") || strings.Contains(ps1, "MSYSTEM")
 	}
+
+	return false
 }
 
-func RenderJson(ctx context.Context, v any) error {
-	c := fromContext(ctx)
-	if c.outputFormat == flags.OutputJSON {
-		return renderJson(c.out, v)
-	}
-	return nil
-}
+type Tuple struct{ Name, Id string }
 
-func RenderReader(ctx context.Context, r io.Reader) error {
-	c := fromContext(ctx)
-	switch c.outputFormat {
-	case flags.OutputJSON:
-		return fmt.Errorf("json output not supported")
-	case flags.OutputText:
-		_, err := io.Copy(c.out, r)
-		return err
-	default:
-		return fmt.Errorf("invalid output format: %s", c.outputFormat)
-	}
-}
-
-type tuple struct{ Name, Id string }
-
-func (c *cmdIO) Select(names map[string]string, label string) (id string, err error) {
+func (c *cmdIO) Select(items []Tuple, label string) (id string, err error) {
 	if !c.interactive {
 		return "", fmt.Errorf("expected to have %s", label)
 	}
-	var items []tuple
-	for k, v := range names {
-		items = append(items, tuple{k, v})
-	}
-	slices.SortFunc(items, func(a, b tuple) int {
-		return strings.Compare(a.Name, b.Name)
-	})
+
 	idx, _, err := (&promptui.Select{
 		Label:             label,
 		Items:             items,
@@ -165,13 +144,25 @@ func (c *cmdIO) Select(names map[string]string, label string) (id string, err er
 	return
 }
 
+// Show a selection prompt where the user can pick one of the name/id items.
+// The items are sorted alphabetically by name.
 func Select[V any](ctx context.Context, names map[string]V, label string) (id string, err error) {
 	c := fromContext(ctx)
-	stringNames := map[string]string{}
+	var items []Tuple
 	for k, v := range names {
-		stringNames[k] = fmt.Sprint(v)
+		items = append(items, Tuple{k, fmt.Sprint(v)})
 	}
-	return c.Select(stringNames, label)
+	slices.SortFunc(items, func(a, b Tuple) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return c.Select(items, label)
+}
+
+// Show a selection prompt where the user can pick one of the name/id items.
+// The items appear in the order specified in the "items" argument.
+func SelectOrdered(ctx context.Context, items []Tuple, label string) (id string, err error) {
+	c := fromContext(ctx)
+	return c.Select(items, label)
 }
 
 func (c *cmdIO) Secret(label string) (value string, err error) {
@@ -293,4 +284,15 @@ func fromContext(ctx context.Context) *cmdIO {
 		panic("no cmdIO found in the context. Please report it as an issue")
 	}
 	return io
+}
+
+// Mocks the context with a cmdio object that discards all output.
+func MockDiscard(ctx context.Context) context.Context {
+	return InContext(ctx, &cmdIO{
+		interactive:  false,
+		outputFormat: flags.OutputText,
+		in:           io.NopCloser(strings.NewReader("")),
+		out:          io.Discard,
+		err:          io.Discard,
+	})
 }

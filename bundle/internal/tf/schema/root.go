@@ -19,13 +19,17 @@ type Root struct {
 	Resource *Resources   `json:"resource,omitempty"`
 }
 
+const ProviderHost = "registry.terraform.io"
+const ProviderSource = "databricks/databricks"
+const ProviderVersion = "1.65.1"
+
 func NewRoot() *Root {
 	return &Root{
-		Terraform: map[string]interface{}{
-			"required_providers": map[string]interface{}{
-				"databricks": map[string]interface{}{
-					"source":  "databricks/databricks",
-					"version": "1.29.0",
+		Terraform: map[string]any{
+			"required_providers": map[string]any{
+				"databricks": map[string]any{
+					"source":  ProviderSource,
+					"version": ProviderVersion,
 				},
 			},
 		},

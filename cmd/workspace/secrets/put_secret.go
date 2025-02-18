@@ -2,12 +2,13 @@ package secrets
 
 import (
 	"encoding/base64"
-	"fmt"
+	"errors"
 	"io"
 	"os"
 
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
+	"github.com/databricks/cli/libs/diag"
 	"github.com/databricks/cli/libs/flags"
 	"github.com/databricks/databricks-sdk-go/service/workspace"
 	"github.com/spf13/cobra"
@@ -50,9 +51,9 @@ func newPutSecret() *cobra.Command {
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		if cmd.Flags().Changed("json") {
-			check = cobra.ExactArgs(0)
+			check = root.ExactArgs(0)
 		}
 		return check(cmd, args)
 	}
@@ -60,18 +61,25 @@ func newPutSecret() *cobra.Command {
 	cmd.PreRunE = root.MustWorkspaceClient
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
+		var diags diag.Diagnostics
 		w := root.WorkspaceClient(ctx)
 
 		bytesValueChanged := cmd.Flags().Changed("bytes-value")
 		stringValueChanged := cmd.Flags().Changed("string-value")
 		if bytesValueChanged && stringValueChanged {
-			return fmt.Errorf("cannot specify both --bytes-value and --string-value")
+			return errors.New("cannot specify both --bytes-value and --string-value")
 		}
 
 		if cmd.Flags().Changed("json") {
-			err = putSecretJson.Unmarshal(&putSecretReq)
-			if err != nil {
-				return err
+			diags = putSecretJson.Unmarshal(&putSecretReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			putSecretReq.Scope = args[0]

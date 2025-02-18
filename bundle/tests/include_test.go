@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/databricks/cli/bundle"
-	"github.com/databricks/cli/bundle/config/mutator"
+	"github.com/databricks/cli/bundle/phases"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/maps"
@@ -17,9 +17,9 @@ func TestIncludeInvalid(t *testing.T) {
 	ctx := context.Background()
 	b, err := bundle.Load(ctx, "./include_invalid")
 	require.NoError(t, err)
-	err = bundle.Apply(ctx, b, bundle.Seq(mutator.DefaultMutators()...))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "notexists.yml defined in 'include' section does not match any files")
+	diags := bundle.Apply(ctx, b, phases.Load())
+	require.Error(t, diags.Error())
+	assert.ErrorContains(t, diags.Error(), "notexists.yml defined in 'include' section does not match any files")
 }
 
 func TestIncludeWithGlob(t *testing.T) {
@@ -31,7 +31,8 @@ func TestIncludeWithGlob(t *testing.T) {
 
 	job := b.Config.Resources.Jobs["my_job"]
 	assert.Equal(t, "1", job.ID)
-	assert.Equal(t, "include_with_glob/job.yml", filepath.ToSlash(job.ConfigFilePath))
+	l := b.Config.GetLocation("resources.jobs.my_job")
+	assert.Equal(t, "include_with_glob/job.yml", filepath.ToSlash(l.File))
 }
 
 func TestIncludeDefault(t *testing.T) {
@@ -51,9 +52,11 @@ func TestIncludeForMultipleMatches(t *testing.T) {
 
 	first := b.Config.Resources.Jobs["my_first_job"]
 	assert.Equal(t, "1", first.ID)
-	assert.Equal(t, "include_multiple/my_first_job/resource.yml", filepath.ToSlash(first.ConfigFilePath))
+	fl := b.Config.GetLocation("resources.jobs.my_first_job")
+	assert.Equal(t, "include_multiple/my_first_job/resource.yml", filepath.ToSlash(fl.File))
 
 	second := b.Config.Resources.Jobs["my_second_job"]
 	assert.Equal(t, "2", second.ID)
-	assert.Equal(t, "include_multiple/my_second_job/resource.yml", filepath.ToSlash(second.ConfigFilePath))
+	sl := b.Config.GetLocation("resources.jobs.my_second_job")
+	assert.Equal(t, "include_multiple/my_second_job/resource.yml", filepath.ToSlash(sl.File))
 }

@@ -38,6 +38,18 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreateScope())
+	cmd.AddCommand(newDeleteAcl())
+	cmd.AddCommand(newDeleteScope())
+	cmd.AddCommand(newDeleteSecret())
+	cmd.AddCommand(newGetAcl())
+	cmd.AddCommand(newGetSecret())
+	cmd.AddCommand(newListAcls())
+	cmd.AddCommand(newListScopes())
+	cmd.AddCommand(newListSecrets())
+	cmd.AddCommand(newPutAcl())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -66,27 +78,29 @@ func newCreateScope() *cobra.Command {
 
 	// TODO: complex arg: backend_azure_keyvault
 	cmd.Flags().StringVar(&createScopeReq.InitialManagePrincipal, "initial-manage-principal", createScopeReq.InitialManagePrincipal, `The principal that is initially granted MANAGE permission to the created scope.`)
-	cmd.Flags().Var(&createScopeReq.ScopeBackendType, "scope-backend-type", `The backend type the scope will be created with.`)
+	cmd.Flags().Var(&createScopeReq.ScopeBackendType, "scope-backend-type", `The backend type the scope will be created with. Supported values: [AZURE_KEYVAULT, DATABRICKS]`)
 
 	cmd.Use = "create-scope SCOPE"
 	cmd.Short = `Create a new secret scope.`
 	cmd.Long = `Create a new secret scope.
   
   The scope name must consist of alphanumeric characters, dashes, underscores,
-  and periods, and may not exceed 128 characters. The maximum number of scopes
-  in a workspace is 100.`
+  and periods, and may not exceed 128 characters.
+
+  Arguments:
+    SCOPE: Scope name requested by the user. Scope names are unique.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'scope' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -96,9 +110,15 @@ func newCreateScope() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createScopeJson.Unmarshal(&createScopeReq)
-			if err != nil {
-				return err
+			diags := createScopeJson.Unmarshal(&createScopeReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -122,12 +142,6 @@ func newCreateScope() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreateScope())
-	})
 }
 
 // start delete-acl command
@@ -157,19 +171,23 @@ func newDeleteAcl() *cobra.Command {
   Users must have the MANAGE permission to invoke this API. Throws
   RESOURCE_DOES_NOT_EXIST if no such secret scope, principal, or ACL exists.
   Throws PERMISSION_DENIED if the user does not have permission to make this
-  API call.`
+  API call.
+
+  Arguments:
+    SCOPE: The name of the scope to remove permissions from.
+    PRINCIPAL: The principal to remove an existing ACL from.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'scope', 'principal' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -179,9 +197,15 @@ func newDeleteAcl() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteAclJson.Unmarshal(&deleteAclReq)
-			if err != nil {
-				return err
+			diags := deleteAclJson.Unmarshal(&deleteAclReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -210,12 +234,6 @@ func newDeleteAcl() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteAcl())
-	})
-}
-
 // start delete-scope command
 
 // Slice with functions to override default command behavior.
@@ -242,19 +260,22 @@ func newDeleteScope() *cobra.Command {
   
   Throws RESOURCE_DOES_NOT_EXIST if the scope does not exist. Throws
   PERMISSION_DENIED if the user does not have permission to make this API
-  call.`
+  call.
+
+  Arguments:
+    SCOPE: Name of the scope to delete.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'scope' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -264,9 +285,15 @@ func newDeleteScope() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteScopeJson.Unmarshal(&deleteScopeReq)
-			if err != nil {
-				return err
+			diags := deleteScopeJson.Unmarshal(&deleteScopeReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -290,12 +317,6 @@ func newDeleteScope() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteScope())
-	})
 }
 
 // start delete-secret command
@@ -325,19 +346,23 @@ func newDeleteSecret() *cobra.Command {
   
   Throws RESOURCE_DOES_NOT_EXIST if no such secret scope or secret exists.
   Throws PERMISSION_DENIED if the user does not have permission to make this
-  API call.`
+  API call.
+
+  Arguments:
+    SCOPE: The name of the scope that contains the secret to delete.
+    KEY: Name of the secret to delete.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'scope', 'key' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -347,9 +372,15 @@ func newDeleteSecret() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = deleteSecretJson.Unmarshal(&deleteSecretReq)
-			if err != nil {
-				return err
+			diags := deleteSecretJson.Unmarshal(&deleteSecretReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -378,12 +409,6 @@ func newDeleteSecret() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDeleteSecret())
-	})
-}
-
 // start get-acl command
 
 // Slice with functions to override default command behavior.
@@ -409,12 +434,16 @@ func newGetAcl() *cobra.Command {
   
   Throws RESOURCE_DOES_NOT_EXIST if no such secret scope exists. Throws
   PERMISSION_DENIED if the user does not have permission to make this API
-  call.`
+  call.
+
+  Arguments:
+    SCOPE: The name of the scope to fetch ACL information from.
+    PRINCIPAL: The principal to fetch ACL information for.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -443,12 +472,6 @@ func newGetAcl() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetAcl())
-	})
 }
 
 // start get-secret command
@@ -482,12 +505,16 @@ func newGetSecret() *cobra.Command {
   
   Throws PERMISSION_DENIED if the user does not have permission to make this
   API call. Throws RESOURCE_DOES_NOT_EXIST if no such secret or secret scope
-  exists.`
+  exists.
+
+  Arguments:
+    SCOPE: The name of the scope to fetch secret information from.
+    KEY: The key to fetch secret for.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -518,12 +545,6 @@ func newGetSecret() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetSecret())
-	})
-}
-
 // start list-acls command
 
 // Slice with functions to override default command behavior.
@@ -549,12 +570,15 @@ func newListAcls() *cobra.Command {
   
   Throws RESOURCE_DOES_NOT_EXIST if no such secret scope exists. Throws
   PERMISSION_DENIED if the user does not have permission to make this API
-  call.`
+  call.
+
+  Arguments:
+    SCOPE: The name of the scope to fetch ACL information from.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -565,11 +589,8 @@ func newListAcls() *cobra.Command {
 
 		listAclsReq.Scope = args[0]
 
-		response, err := w.Secrets.ListAclsAll(ctx, listAclsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Secrets.ListAcls(ctx, listAclsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -582,12 +603,6 @@ func newListAcls() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListAcls())
-	})
 }
 
 // start list-scopes command
@@ -616,11 +631,8 @@ func newListScopes() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
-		response, err := w.Secrets.ListScopesAll(ctx)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Secrets.ListScopes(ctx)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -633,12 +645,6 @@ func newListScopes() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListScopes())
-	})
 }
 
 // start list-secrets command
@@ -668,12 +674,15 @@ func newListSecrets() *cobra.Command {
   The lastUpdatedTimestamp returned is in milliseconds since epoch. Throws
   RESOURCE_DOES_NOT_EXIST if no such secret scope exists. Throws
   PERMISSION_DENIED if the user does not have permission to make this API
-  call.`
+  call.
+
+  Arguments:
+    SCOPE: The name of the scope to list secrets within.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -684,11 +693,8 @@ func newListSecrets() *cobra.Command {
 
 		listSecretsReq.Scope = args[0]
 
-		response, err := w.Secrets.ListSecretsAll(ctx, listSecretsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.Secrets.ListSecrets(ctx, listSecretsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -701,12 +707,6 @@ func newListSecrets() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newListSecrets())
-	})
 }
 
 // start put-acl command
@@ -756,19 +756,24 @@ func newPutAcl() *cobra.Command {
   RESOURCE_ALREADY_EXISTS if a permission for the principal already exists.
   Throws INVALID_PARAMETER_VALUE if the permission or principal is invalid.
   Throws PERMISSION_DENIED if the user does not have permission to make this
-  API call.`
+  API call.
+
+  Arguments:
+    SCOPE: The name of the scope to apply permissions to.
+    PRINCIPAL: The principal in which the permission is applied.
+    PERMISSION: The permission level applied to the principal.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("json") {
-			err := cobra.ExactArgs(0)(cmd, args)
+			err := root.ExactArgs(0)(cmd, args)
 			if err != nil {
 				return fmt.Errorf("when --json flag is specified, no positional arguments are required. Provide 'scope', 'principal', 'permission' in your JSON input")
 			}
 			return nil
 		}
-		check := cobra.ExactArgs(3)
+		check := root.ExactArgs(3)
 		return check(cmd, args)
 	}
 
@@ -778,9 +783,15 @@ func newPutAcl() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = putAclJson.Unmarshal(&putAclReq)
-			if err != nil {
-				return err
+			diags := putAclJson.Unmarshal(&putAclReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if !cmd.Flags().Changed("json") {
@@ -813,12 +824,6 @@ func newPutAcl() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newPutAcl())
-	})
 }
 
 // end service Secrets

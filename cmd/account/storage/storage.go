@@ -32,6 +32,12 @@ func New() *cobra.Command {
 		},
 	}
 
+	// Add methods
+	cmd.AddCommand(newCreate())
+	cmd.AddCommand(newDelete())
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newList())
+
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
 		fn(cmd)
@@ -81,9 +87,15 @@ func newCreate() *cobra.Command {
 		a := root.AccountClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = createJson.Unmarshal(&createReq)
-			if err != nil {
-				return err
+			diags := createJson.Unmarshal(&createReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			return fmt.Errorf("please provide command input in JSON format by specifying the --json flag")
@@ -108,12 +120,6 @@ func newCreate() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newCreate())
-	})
-}
-
 // start delete command
 
 // Slice with functions to override default command behavior.
@@ -135,7 +141,10 @@ func newDelete() *cobra.Command {
 	cmd.Long = `Delete storage configuration.
   
   Deletes a Databricks storage configuration. You cannot delete a storage
-  configuration that is associated with any workspace.`
+  configuration that is associated with any workspace.
+
+  Arguments:
+    STORAGE_CONFIGURATION_ID: Databricks Account API storage configuration ID.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -182,12 +191,6 @@ func newDelete() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newDelete())
-	})
-}
-
 // start get command
 
 // Slice with functions to override default command behavior.
@@ -208,7 +211,10 @@ func newGet() *cobra.Command {
 	cmd.Short = `Get storage configuration.`
 	cmd.Long = `Get storage configuration.
   
-  Gets a Databricks storage configuration for an account, both specified by ID.`
+  Gets a Databricks storage configuration for an account, both specified by ID.
+
+  Arguments:
+    STORAGE_CONFIGURATION_ID: Databricks Account API storage configuration ID.`
 
 	cmd.Annotations = make(map[string]string)
 
@@ -255,12 +261,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start list command
 
 // Slice with functions to override default command behavior.
@@ -302,12 +302,6 @@ func newList() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newList())
-	})
 }
 
 // end service Storage

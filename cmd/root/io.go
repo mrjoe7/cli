@@ -21,7 +21,7 @@ func initOutputFlag(cmd *cobra.Command) *outputFlag {
 	// Configure defaults from environment, if applicable.
 	// If the provided value is invalid it is ignored.
 	if v, ok := env.Lookup(cmd.Context(), envOutputFormat); ok {
-		f.output.Set(v)
+		f.output.Set(v) //nolint:errcheck
 	}
 
 	cmd.PersistentFlags().VarP(&f.output, "output", "o", "output type: text or json")
@@ -38,14 +38,16 @@ func OutputType(cmd *cobra.Command) flags.Output {
 }
 
 func (f *outputFlag) initializeIO(cmd *cobra.Command) error {
-	var template string
+	var headerTemplate, template string
 	if cmd.Annotations != nil {
 		// rely on zeroval being an empty string
 		template = cmd.Annotations["template"]
+		headerTemplate = cmd.Annotations["headerTemplate"]
 	}
 
-	cmdIO := cmdio.NewIO(f.output, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), template)
-	ctx := cmdio.InContext(cmd.Context(), cmdIO)
+	ctx := cmd.Context()
+	cmdIO := cmdio.NewIO(ctx, f.output, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), headerTemplate, template)
+	ctx = cmdio.InContext(ctx, cmdIO)
 	cmd.SetContext(ctx)
 	return nil
 }

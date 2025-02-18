@@ -3,6 +3,8 @@
 package workspace_bindings
 
 import (
+	"fmt"
+
 	"github.com/databricks/cli/cmd/root"
 	"github.com/databricks/cli/libs/cmdio"
 	"github.com/databricks/cli/libs/flags"
@@ -35,12 +37,19 @@ func New() *cobra.Command {
   (/api/2.1/unity-catalog/bindings/{securable_type}/{securable_name}) which
   introduces the ability to bind a securable in READ_ONLY mode (catalogs only).
   
-  Securables that support binding: - catalog`,
+  Securable types that support binding: - catalog - storage_credential -
+  external_location`,
 		GroupID: "catalog",
 		Annotations: map[string]string{
 			"package": "catalog",
 		},
 	}
+
+	// Add methods
+	cmd.AddCommand(newGet())
+	cmd.AddCommand(newGetBindings())
+	cmd.AddCommand(newUpdate())
+	cmd.AddCommand(newUpdateBindings())
 
 	// Apply optional overrides to this command.
 	for _, fn := range cmdOverrides {
@@ -71,12 +80,15 @@ func newGet() *cobra.Command {
 	cmd.Long = `Get catalog workspace bindings.
   
   Gets workspace bindings of the catalog. The caller must be a metastore admin
-  or an owner of the catalog.`
+  or an owner of the catalog.
+
+  Arguments:
+    NAME: The name of the catalog.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -106,12 +118,6 @@ func newGet() *cobra.Command {
 	return cmd
 }
 
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGet())
-	})
-}
-
 // start get-bindings command
 
 // Slice with functions to override default command behavior.
@@ -128,17 +134,24 @@ func newGetBindings() *cobra.Command {
 
 	// TODO: short flags
 
+	cmd.Flags().IntVar(&getBindingsReq.MaxResults, "max-results", getBindingsReq.MaxResults, `Maximum number of workspace bindings to return.`)
+	cmd.Flags().StringVar(&getBindingsReq.PageToken, "page-token", getBindingsReq.PageToken, `Opaque pagination token to go to next page based on previous query.`)
+
 	cmd.Use = "get-bindings SECURABLE_TYPE SECURABLE_NAME"
 	cmd.Short = `Get securable workspace bindings.`
 	cmd.Long = `Get securable workspace bindings.
   
   Gets workspace bindings of the securable. The caller must be a metastore admin
-  or an owner of the securable.`
+  or an owner of the securable.
+
+  Arguments:
+    SECURABLE_TYPE: The type of the securable to bind to a workspace.
+    SECURABLE_NAME: The name of the securable.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -147,14 +160,14 @@ func newGetBindings() *cobra.Command {
 		ctx := cmd.Context()
 		w := root.WorkspaceClient(ctx)
 
-		getBindingsReq.SecurableType = args[0]
+		_, err = fmt.Sscan(args[0], &getBindingsReq.SecurableType)
+		if err != nil {
+			return fmt.Errorf("invalid SECURABLE_TYPE: %s", args[0])
+		}
 		getBindingsReq.SecurableName = args[1]
 
-		response, err := w.WorkspaceBindings.GetBindings(ctx, getBindingsReq)
-		if err != nil {
-			return err
-		}
-		return cmdio.Render(ctx, response)
+		response := w.WorkspaceBindings.GetBindings(ctx, getBindingsReq)
+		return cmdio.RenderIterator(ctx, response)
 	}
 
 	// Disable completions since they are not applicable.
@@ -167,12 +180,6 @@ func newGetBindings() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newGetBindings())
-	})
 }
 
 // start update command
@@ -201,12 +208,15 @@ func newUpdate() *cobra.Command {
 	cmd.Long = `Update catalog workspace bindings.
   
   Updates workspace bindings of the catalog. The caller must be a metastore
-  admin or an owner of the catalog.`
+  admin or an owner of the catalog.
+
+  Arguments:
+    NAME: The name of the catalog.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(1)
+		check := root.ExactArgs(1)
 		return check(cmd, args)
 	}
 
@@ -216,9 +226,15 @@ func newUpdate() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateJson.Unmarshal(&updateReq)
-			if err != nil {
-				return err
+			diags := updateJson.Unmarshal(&updateReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		updateReq.Name = args[0]
@@ -240,12 +256,6 @@ func newUpdate() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdate())
-	})
 }
 
 // start update-bindings command
@@ -274,12 +284,16 @@ func newUpdateBindings() *cobra.Command {
 	cmd.Long = `Update securable workspace bindings.
   
   Updates workspace bindings of the securable. The caller must be a metastore
-  admin or an owner of the securable.`
+  admin or an owner of the securable.
+
+  Arguments:
+    SECURABLE_TYPE: The type of the securable to bind to a workspace.
+    SECURABLE_NAME: The name of the securable.`
 
 	cmd.Annotations = make(map[string]string)
 
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		check := cobra.ExactArgs(2)
+		check := root.ExactArgs(2)
 		return check(cmd, args)
 	}
 
@@ -289,12 +303,21 @@ func newUpdateBindings() *cobra.Command {
 		w := root.WorkspaceClient(ctx)
 
 		if cmd.Flags().Changed("json") {
-			err = updateBindingsJson.Unmarshal(&updateBindingsReq)
-			if err != nil {
-				return err
+			diags := updateBindingsJson.Unmarshal(&updateBindingsReq)
+			if diags.HasError() {
+				return diags.Error()
+			}
+			if len(diags) > 0 {
+				err := cmdio.RenderDiagnosticsToErrorOut(ctx, diags)
+				if err != nil {
+					return err
+				}
 			}
 		}
-		updateBindingsReq.SecurableType = args[0]
+		_, err = fmt.Sscan(args[0], &updateBindingsReq.SecurableType)
+		if err != nil {
+			return fmt.Errorf("invalid SECURABLE_TYPE: %s", args[0])
+		}
 		updateBindingsReq.SecurableName = args[1]
 
 		response, err := w.WorkspaceBindings.UpdateBindings(ctx, updateBindingsReq)
@@ -314,12 +337,6 @@ func newUpdateBindings() *cobra.Command {
 	}
 
 	return cmd
-}
-
-func init() {
-	cmdOverrides = append(cmdOverrides, func(cmd *cobra.Command) {
-		cmd.AddCommand(newUpdateBindings())
-	})
 }
 
 // end service WorkspaceBindings

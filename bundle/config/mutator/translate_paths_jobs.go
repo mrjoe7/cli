@@ -1,133 +1,86 @@
 package mutator
 
 import (
+	"context"
 	"fmt"
+	"slices"
 
-	"github.com/databricks/cli/bundle"
-	"github.com/databricks/databricks-sdk-go/service/compute"
-	"github.com/databricks/databricks-sdk-go/service/jobs"
+	"github.com/databricks/cli/bundle/config/mutator/paths"
+
+	"github.com/databricks/cli/libs/dyn"
 )
 
-func transformNotebookTask(resource any, dir string) *transformer {
-	task, ok := resource.(*jobs.Task)
-	if !ok || task.NotebookTask == nil {
-		return nil
+func (t *translateContext) applyJobTranslations(ctx context.Context, v dyn.Value) (dyn.Value, error) {
+	var err error
+
+	fallback, err := gatherFallbackPaths(v, "jobs")
+	if err != nil {
+		return dyn.InvalidValue, err
 	}
 
-	return &transformer{
-		dir,
-		&task.NotebookTask.NotebookPath,
-		"tasks.notebook_task.notebook_path",
-		translateNotebookPath,
-	}
-}
-
-func transformSparkTask(resource any, dir string) *transformer {
-	task, ok := resource.(*jobs.Task)
-	if !ok || task.SparkPythonTask == nil {
-		return nil
-	}
-
-	return &transformer{
-		dir,
-		&task.SparkPythonTask.PythonFile,
-		"tasks.spark_python_task.python_file",
-		translateFilePath,
-	}
-}
-
-func transformWhlLibrary(resource any, dir string) *transformer {
-	library, ok := resource.(*compute.Library)
-	if !ok || library.Whl == "" {
-		return nil
-	}
-
-	return &transformer{
-		dir,
-		&library.Whl,
-		"libraries.whl",
-		translateNoOp, // Does not convert to remote path but makes sure that nested paths resolved correctly
-	}
-}
-
-func transformDbtTask(resource any, dir string) *transformer {
-	task, ok := resource.(*jobs.Task)
-	if !ok || task.DbtTask == nil {
-		return nil
-	}
-
-	return &transformer{
-		dir,
-		&task.DbtTask.ProjectDirectory,
-		"tasks.dbt_task.project_directory",
-		translateDirectoryPath,
-	}
-}
-
-func transformSqlFileTask(resource any, dir string) *transformer {
-	task, ok := resource.(*jobs.Task)
-	if !ok || task.SqlTask == nil || task.SqlTask.File == nil {
-		return nil
-	}
-
-	return &transformer{
-		dir,
-		&task.SqlTask.File.Path,
-		"tasks.sql_task.file.path",
-		translateFilePath,
-	}
-}
-
-func transformJarLibrary(resource any, dir string) *transformer {
-	library, ok := resource.(*compute.Library)
-	if !ok || library.Jar == "" {
-		return nil
-	}
-
-	return &transformer{
-		dir,
-		&library.Jar,
-		"libraries.jar",
-		translateNoOp, // Does not convert to remote path but makes sure that nested paths resolved correctly
-	}
-}
-
-func applyJobTransformers(m *translatePaths, b *bundle.Bundle) error {
-	jobTransformers := []transformFunc{
-		transformNotebookTask,
-		transformSparkTask,
-		transformWhlLibrary,
-		transformJarLibrary,
-		transformDbtTask,
-		transformSqlFileTask,
-	}
-
-	for key, job := range b.Config.Resources.Jobs {
-		dir, err := job.ConfigFileDirectory()
-		if err != nil {
-			return fmt.Errorf("unable to determine directory for job %s: %w", key, err)
-		}
-
-		// Do not translate job task paths if using git source
+	// Do not translate job task paths if using Git source
+	var ignore []string
+	for key, job := range t.b.Config.Resources.Jobs {
 		if job.GitSource != nil {
-			continue
-		}
-
-		for i := 0; i < len(job.Tasks); i++ {
-			task := &job.Tasks[i]
-			err := m.applyTransformers(jobTransformers, b, task, dir)
-			if err != nil {
-				return err
-			}
-			for j := 0; j < len(task.Libraries); j++ {
-				library := &task.Libraries[j]
-				err := m.applyTransformers(jobTransformers, b, library, dir)
-				if err != nil {
-					return err
-				}
-			}
+			ignore = append(ignore, key)
 		}
 	}
 
-	return nil
+	return paths.VisitJobPaths(v, func(p dyn.Path, kind paths.PathKind, v dyn.Value) (dyn.Value, error) {
+		key := p[2].Key()
+
+		// Skip path translation if the job is using git source.
+		if slices.Contains(ignore, key) {
+			return v, nil
+		}
+
+		dir, err := v.Location().Directory()
+		if err != nil {
+			return dyn.InvalidValue, fmt.Errorf("unable to determine directory for job %s: %w", key, err)
+		}
+
+		mode, err := getJobTranslateMode(kind)
+		if err != nil {
+			return dyn.InvalidValue, err
+		}
+
+		opts := translateOptions{
+			Mode: mode,
+		}
+
+		// Try to rewrite the path relative to the directory of the configuration file where the value was defined.
+		nv, err := t.rewriteValue(ctx, p, v, dir, opts)
+		if err == nil {
+			return nv, nil
+		}
+
+		// If we failed to rewrite the path, try to rewrite it relative to the fallback directory.
+		// We only do this for jobs and pipelines because of the comment in [gatherFallbackPaths].
+		if fallback[key] != "" {
+			nv, nerr := t.rewriteValue(ctx, p, v, fallback[key], opts)
+			if nerr == nil {
+				// TODO: Emit a warning that this path should be rewritten.
+				return nv, nil
+			}
+		}
+
+		return dyn.InvalidValue, err
+	})
+}
+
+func getJobTranslateMode(kind paths.PathKind) (TranslateMode, error) {
+	switch kind {
+	case paths.PathKindLibrary:
+		return TranslateModeLocalRelative, nil
+	case paths.PathKindNotebook:
+		return TranslateModeNotebook, nil
+	case paths.PathKindWorkspaceFile:
+		return TranslateModeFile, nil
+	case paths.PathKindDirectory:
+		return TranslateModeDirectory, nil
+	case paths.PathKindWithPrefix:
+		return TranslateModeLocalRelativeWithPrefix, nil
+	}
+
+	return TranslateMode(0), fmt.Errorf("unsupported path kind: %d", kind)
 }
